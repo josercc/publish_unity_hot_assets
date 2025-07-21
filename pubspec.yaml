@@ -1,0 +1,23 @@
+name: publish_unity_hot_assets
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.5.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  get: ^4.7.2
+  encrypt: ^5.0.1
+  pointycastle: ^3.7.3
+  dio: ^5.8.0+1
+  asn1lib: ^1.6.5
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
