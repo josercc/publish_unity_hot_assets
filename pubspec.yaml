@@ -14,6 +14,8 @@ dependencies:
   pointycastle: ^3.7.3
   dio: ^5.8.0+1
   asn1lib: ^1.6.5
+  flutter_smart_dialog: ^4.9.8+8
+  darty_json_safe: ^1.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

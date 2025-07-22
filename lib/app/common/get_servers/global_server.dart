@@ -16,6 +16,11 @@ class GlobalServer extends GetxService {
     final res = await dio.post<T>(
       url,
       data: data,
+      options: Options(
+        headers: {
+          'x-access-token': token,
+        },
+      ),
     );
     print(res.data);
     return res;
