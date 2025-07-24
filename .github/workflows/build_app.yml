@@ -36,7 +36,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
-          files: build/windows/runner/x64/Release/FlutterApp-${{github.ref_name}}-windows.zip
+          files: build/windows/x64/runner/Release/FlutterApp-${{github.ref_name}}-windows.zip
 
   build-and-release-macos:
     runs-on: macos-latest
