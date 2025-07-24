@@ -15,7 +15,7 @@ jobs:
         with:
           channel: 'stable'
           architecture: x64
-          flutter-version: '3.13.6'
+          flutter-version: '3.24.5'
       - name: Install project dependencies
         run: flutter pub get
       - name: Generate intermediates
@@ -47,7 +47,7 @@ jobs:
         with:
           channel: 'stable'
           architecture: x64
-          flutter-version: '3.13.6'
+          flutter-version: '3.24.5'
       - name: Install project dependencies
         run: flutter pub get
       - name: Generate intermediates
