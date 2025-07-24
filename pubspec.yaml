@@ -1,6 +1,6 @@
 name: publish_unity_hot_assets
 description: "A new Flutter project."
-publish_to: 'none'
+publish_to: "none"
 version: 0.1.0
 
 environment:
@@ -16,6 +16,14 @@ dependencies:
   asn1lib: ^1.6.5
   flutter_smart_dialog: ^4.9.8+8
   darty_json_safe: ^1.0.3
+  archive: ^4.0.7
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  xml2json: ^6.2.6
+  crypto: ^3.0.3 # 添加加密库依赖
+  quickalert: ^1.1.0
+  shared_preferences: ^2.5.3
+  flutter_archive: ^6.0.3
 dev_dependencies:
   flutter_test:
     sdk: flutter
