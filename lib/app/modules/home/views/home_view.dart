@@ -60,6 +60,7 @@ class HomeView extends GetView<HomeController> {
                         selected: {controller.curBuildConfiguration.value},
                         onSelectionChanged: (value) {
                           controller.curBuildConfiguration.value = value.first;
+                          controller.updateLocalResourcePath();
                         },
                       ),
                     ),
@@ -92,6 +93,16 @@ class HomeView extends GetView<HomeController> {
                       onChanged: (value) {
                         controller.isSkipDownload.value = value;
                       },
+                    ),
+                  ),
+
+                  /// 本地资源路径地址
+                  ListTile(
+                    title: _buildTitle('本地资源路径地址'),
+                    subtitle: CupertinoTextField(
+                      placeholder: '请输入本地资源路径地址',
+                      controller: controller.localResourcePathController,
+                      readOnly: true,
                     ),
                   ),
 

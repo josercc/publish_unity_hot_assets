@@ -50,6 +50,9 @@ class HomeController extends GetxController {
   /// unity 分支
   TextEditingController unityBranchController = TextEditingController();
 
+  /// 本地资源路径地址
+  TextEditingController localResourcePathController = TextEditingController();
+
   /// 当前进行的任务列表
   final taskList = <Task>[].obs;
 
@@ -112,7 +115,21 @@ class HomeController extends GetxController {
     curPlatform.value = platform;
     SmartDialog.showLoading();
     await loadMinVersion();
+    await updateLocalResourcePath();
     SmartDialog.dismiss();
+  }
+
+  /// 更新本地地址
+  Future<void> updateLocalResourcePath() async {
+    final documentDir = await getApplicationDocumentsDirectory();
+
+    final hotUpdateDir = join(
+      documentDir.path,
+      '.publish_unity_hot_assets',
+      curPlatform.value,
+      curBuildConfiguration.value.name,
+    );
+    localResourcePathController.text = hotUpdateDir;
   }
 
   releaseHotUpdateVersion() async {
