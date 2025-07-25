@@ -191,25 +191,27 @@ class HomeController extends GetxController {
     final patchJson = xml2Json.toOpenRally();
     final patchABList = JSON(patchJson)['Patch']['ABList']['PatchAB'].listValue;
     List<UploadResourceTask> uploadResTaskList = [
-      UploadResourceTask(patchXmlFile),
-      UploadResourceTask(patchBytesFile),
+      UploadResourceTask(patchXmlFile, await patchXmlFile.length()),
+      UploadResourceTask(patchBytesFile, await patchBytesFile.length()),
     ];
     List<UploadResourceTask> uploadABTaskList = [];
     final assetBundleFiles = assetBundleDir.listSync().whereType<File>();
     for (final file in assetBundleFiles) {
       final fileExtension = extension(file.path);
       if (fileExtension == '.bytes' || fileExtension == '.xml') {
-        uploadABTaskList.add(UploadResourceTask(file));
+        uploadABTaskList.add(UploadResourceTask(file, await file.length()));
       } else if (fileExtension == '.zip') {
         final fileName = basenameWithoutExtension(file.path);
         final md5 = patchABList
+            .where((e) => JSON(e)['ABName'].string == fileName)
             .map((e) => JSON(e)['Md5'].string)
             .whereType<String>()
             .firstOrNull;
         if (md5 == null) {
           throw 'Patch.xml 文件中没有 $fileName 的 md5 值';
         }
-        uploadABTaskList.add(UploadResourceTask(file, md5: md5));
+        uploadABTaskList
+            .add(UploadResourceTask(file, await file.length(), md5: md5));
       } else {
         continue;
       }
@@ -345,32 +347,35 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
   /// 本地文件路径
   final File file;
   final String? md5;
+  final int fileSize;
 
-  UploadResourceTask(this.file, {this.md5})
-      : super(name: '上传资源文件 ${basename(file.path)}');
+  UploadResourceTask(this.file, this.fileSize, {this.md5})
+      : super(
+            name:
+                '上传资源文件 ${basename(file.path)}(${(fileSize / 1024 / 1024).toStringAsFixed(2)}MB)');
 
   @override
   Future<UploadResourceResonse> execute() async {
+    /// 先查询当前文件是否已经上传过
+    final md5 = this.md5 ?? await computeMd5();
     print(file.path);
-    return _start().then((e) {
+    return _start(md5).then((e) {
       status.value = TaskStatus.fromCode(
-          TaskStatusCode.success, '[${basename(file.path)}]上传成功');
+          TaskStatusCode.success, '[$md5][${basename(file.path)}]上传成功');
       return e;
     }).catchError((e) {
-      status.value = TaskStatus.fromCode(
-          TaskStatusCode.error, '[${basename(file.path)}]上传失败:${e.toString()}');
+      status.value = TaskStatus.fromCode(TaskStatusCode.error,
+          '[$md5][${basename(file.path)}]上传失败:${e.toString()}');
       throw e;
     });
   }
 
-  Future<UploadResourceResonse> _start() async {
+  Future<UploadResourceResonse> _start(String md5) async {
     status.value = TaskStatus.fromCode(
         TaskStatusCode.processing, '[${basename(file.path)}]正在上传资源文件');
     final fileLength = await file.length();
     final fileName = basename(file.path);
 
-    /// 先查询当前文件是否已经上传过
-    final md5 = this.md5 ?? await computeMd5();
     final url = await queryNetworkImageUrl(md5);
     if (url != null) {
       return UploadResourceResonse(
@@ -401,7 +406,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
         uploadId: uploadId,
         partNumber: partNumber,
         bytes: partBytes,
-        fileName: 'part_$partNumber',
+        fileName: fileName,
       );
     }
 
@@ -420,6 +425,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
 
   /// 计算文件的 md5
   Future<String> computeMd5() async {
+    print('正在计算${file.path}的 md5');
     final content = file.openRead();
     final digest = await crypto.md5.bind(content).first;
     return digest.toString();
