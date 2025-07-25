@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -83,10 +84,17 @@ class LoginView extends GetView<LoginController> {
                   onPressed: () async {
                     try {
                       SmartDialog.showLoading();
+
                       await controller.login();
                       SmartDialog.dismiss();
                     } catch (e) {
-                      showErrorToast(e.toString());
+                      SmartDialog.dismiss();
+                      if (e is DioException) {
+                        showErrorToast(
+                            e.response?.statusMessage ?? e.toString());
+                      } else {
+                        showErrorToast(e.toString());
+                      }
                     }
                   },
                   child: const Text('登陆'),

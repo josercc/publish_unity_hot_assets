@@ -25,14 +25,18 @@ class JenkinsApi {
 
   /// 验证登录
   Future<bool> verifyLogin() async {
-    final res = await global.dio.get(
+    final res = await global.dio
+        .get(
       '$jenkinsUrl/user/$jenkinsUserName/api/json?pretty=true',
       options: Options(
         headers: {
           'Authorization': getAuthHeader(),
         },
       ),
-    );
+    )
+        .catchError((e) {
+      throw e;
+    });
     final property = JSON(res.data)['property'].listValue;
     return property.isNotEmpty;
   }
