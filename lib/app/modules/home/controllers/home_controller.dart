@@ -68,6 +68,9 @@ class HomeController extends GetxController {
   /// 是否跳过下载
   final isSkipDownload = false.obs;
 
+  /// 是否强制上传
+  final isForceUpload = false.obs;
+
   @override
   void onInit() {
     super.onInit();
@@ -76,6 +79,7 @@ class HomeController extends GetxController {
     Future.sync(() async {
       final branch = await global.jenkinsApi?.queryDefaultBranch();
       unityBranchController.text = branch ?? '';
+      await updateLocalResourcePath();
       await loadMinVersion();
     });
   }
@@ -158,10 +162,10 @@ class HomeController extends GetxController {
     }
 
     /// 版本号必须是 vx.x.x 格式的
-    final versionReg = RegExp(r'^v\d+\.\d+\.\d+$');
-    if (!versionReg.hasMatch(version)) {
-      throw const ToastException('版本号必须是 vx.x.x 格式的');
-    }
+    // final versionReg = RegExp(r'^v\d+\.\d+\.\d+$');
+    // if (!versionReg.hasMatch(version)) {
+    //   throw const ToastException('版本号必须是 vx.x.x 格式的');
+    // }
 
     final minVersion = minVersionController.text;
     if (minVersion.isEmpty) {
@@ -208,27 +212,45 @@ class HomeController extends GetxController {
     final patchJson = xml2Json.toOpenRally();
     final patchABList = JSON(patchJson)['Patch']['ABList']['PatchAB'].listValue;
     List<UploadResourceTask> uploadResTaskList = [
-      UploadResourceTask(patchXmlFile, await patchXmlFile.length()),
-      UploadResourceTask(patchBytesFile, await patchBytesFile.length()),
+      UploadResourceTask(
+        patchXmlFile,
+        await patchXmlFile.length(),
+        isForceUpload: isForceUpload.value,
+      ),
+      UploadResourceTask(
+        patchBytesFile,
+        await patchBytesFile.length(),
+        isForceUpload: isForceUpload.value,
+      ),
     ];
     List<UploadResourceTask> uploadABTaskList = [];
     final assetBundleFiles = assetBundleDir.listSync().whereType<File>();
     for (final file in assetBundleFiles) {
       final fileExtension = extension(file.path);
       if (fileExtension == '.bytes' || fileExtension == '.xml') {
-        uploadABTaskList.add(UploadResourceTask(file, await file.length()));
+        uploadABTaskList.add(UploadResourceTask(
+          file,
+          await file.length(),
+          isForceUpload: isForceUpload.value,
+        ));
       } else if (fileExtension == '.zip') {
         final fileName = basenameWithoutExtension(file.path);
-        final md5 = patchABList
+        final md5s = patchABList
             .where((e) => JSON(e)['ABName'].string == fileName)
             .map((e) => JSON(e)['Md5'].string)
             .whereType<String>()
-            .firstOrNull;
-        if (md5 == null) {
+            .toList();
+        print('fileName: $fileName md5s: $md5s');
+
+        if (md5s.isEmpty) {
           throw 'Patch.xml 文件中没有 $fileName 的 md5 值';
         }
-        uploadABTaskList
-            .add(UploadResourceTask(file, await file.length(), md5: md5));
+        uploadABTaskList.add(UploadResourceTask(
+          file,
+          await file.length(),
+          md5: md5s.firstOrNull,
+          isForceUpload: isForceUpload.value,
+        ));
       } else {
         continue;
       }
@@ -365,8 +387,10 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
   final File file;
   final String? md5;
   final int fileSize;
+  final bool isForceUpload;
 
-  UploadResourceTask(this.file, this.fileSize, {this.md5})
+  UploadResourceTask(this.file, this.fileSize,
+      {this.md5, this.isForceUpload = false})
       : super(
             name:
                 '上传资源文件 ${basename(file.path)}(${(fileSize / 1024 / 1024).toStringAsFixed(2)}MB)');
@@ -393,14 +417,16 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     final fileLength = await file.length();
     final fileName = basename(file.path);
 
-    final url = await queryNetworkImageUrl(md5);
-    if (url != null) {
-      return UploadResourceResonse(
-        packageName: fileName,
-        packageUrl: url,
-        packageSize: fileLength,
-        md5: md5,
-      );
+    if (!isForceUpload) {
+      final url = await queryNetworkImageUrl(md5);
+      if (url != null) {
+        return UploadResourceResonse(
+          packageName: fileName,
+          packageUrl: url,
+          packageSize: fileLength,
+          md5: md5,
+        );
+      }
     }
 
     final uploadId = await getUploadId(

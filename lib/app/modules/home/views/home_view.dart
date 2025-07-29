@@ -213,6 +213,17 @@ class HomeView extends GetView<HomeController> {
                     ),
                   ),
 
+                  /// 是否强制上传
+                  ListTile(
+                    title: const Text('是否强制上传'),
+                    trailing: Switch(
+                      value: controller.isForceUpload.value,
+                      onChanged: (value) {
+                        controller.isForceUpload.value = value;
+                      },
+                    ),
+                  ),
+
                   /// 发布
                   SizedBox(
                     width: double.infinity,
