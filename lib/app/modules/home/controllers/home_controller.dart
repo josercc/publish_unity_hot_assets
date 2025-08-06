@@ -622,6 +622,9 @@ class DownloadZipUrlTask extends Task<String> {
     final hotUpdateAssetDir = Directory(join(hotUpdateDir, 'Assets'));
 
     if (!isSkipDownload) {
+      if (await Directory(hotUpdateDir).exists()) {
+        await Directory(hotUpdateDir).delete(recursive: true);
+      }
       await global.jenkinsApi?.downloadZipUrl(
         platform: platform,
         buildConfiguration: buildConfiguration,
