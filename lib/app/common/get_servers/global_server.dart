@@ -21,14 +21,19 @@ class GlobalServer extends GetxService {
     final url = _gmallUrl(path);
     print(url);
     print(data);
-    final res = await dio.post<T>(
+    final res = await dio
+        .post<T>(
       url,
       data: data,
       options: Options(
         headers: {'x-access-token': token, ...headers ?? {}},
       ),
       onSendProgress: onSendProgress,
-    );
+    )
+        .catchError((e) {
+      print(e);
+      throw e;
+    });
     print(res.data);
     return res;
   }
@@ -44,7 +49,7 @@ class GlobalServer extends GetxService {
       onSendProgress: onSendProgress,
     );
     final success = JSON(res.data)['success'].boolValue;
-    final message = JSON(res.data)['message'].string ?? '网络未知错误!';
+    final message = JSON(res.data).stringValue;
     if (!success) {
       throw Exception(message);
     }
