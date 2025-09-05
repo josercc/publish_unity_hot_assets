@@ -1,6 +1,5 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/modules/home/datas/task.dart';
@@ -68,9 +67,27 @@ class HomeView extends GetView<HomeController> {
 
                   ListTile(
                     title: const Text('unity 分支'),
-                    subtitle: CupertinoTextField(
-                      placeholder: '请输入unity 分支',
-                      controller: controller.unityBranchController,
+                    subtitle: Obx(
+                      () => DropdownButtonFormField<String>(
+                        value: controller.curUnityBranch.value.isEmpty
+                            ? null
+                            : controller.curUnityBranch.value,
+                        decoration: const InputDecoration(
+                          hintText: '请选择unity分支',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: controller.unityBranchList.map((String branch) {
+                          return DropdownMenuItem<String>(
+                            value: branch,
+                            child: Text(branch),
+                          );
+                        }).toList(),
+                        onChanged: (String? newValue) {
+                          if (newValue != null) {
+                            controller.selectUnityBranch(newValue);
+                          }
+                        },
+                      ),
                     ),
                   ),
 

@@ -29,6 +29,12 @@ class HomeController extends GetxController {
   /// 支持最低的版本列表
   final minVersionList = <String>[].obs;
 
+  /// Unity分支列表
+  final unityBranchList = <String>[].obs;
+
+  /// 当前选中的Unity分支
+  final curUnityBranch = ''.obs;
+
   ///资源包描述
   TextEditingController descController = TextEditingController();
 
@@ -77,8 +83,7 @@ class HomeController extends GetxController {
     setDate(DateTime.now());
     setTime(TimeOfDay.now());
     Future.sync(() async {
-      final branch = await global.jenkinsApi?.queryDefaultBranch();
-      unityBranchController.text = branch ?? '';
+      await loadUnityBranchList();
       await updateLocalResourcePath();
       await loadMinVersion();
     });
@@ -112,6 +117,27 @@ class HomeController extends GetxController {
     });
     SmartDialog.dismiss();
     minVersionList.value = versions;
+  }
+
+  /// 加载Unity分支列表
+  Future<void> loadUnityBranchList() async {
+    try {
+      final branches = await global.jenkinsApi?.getBranchList() ?? [];
+      unityBranchList.value = branches;
+      if (branches.isNotEmpty && curUnityBranch.value.isEmpty) {
+        curUnityBranch.value = branches.first;
+        unityBranchController.text = branches.first;
+      }
+    } catch (e) {
+      print('加载Unity分支列表失败: $e');
+      SmartDialog.showToast('加载Unity分支列表失败: $e');
+    }
+  }
+
+  /// 选择Unity分支
+  void selectUnityBranch(String branch) {
+    curUnityBranch.value = branch;
+    unityBranchController.text = branch;
   }
 
   /// 切换平台

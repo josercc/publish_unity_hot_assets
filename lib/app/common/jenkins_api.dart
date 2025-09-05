@@ -156,4 +156,113 @@ class JenkinsApi {
         .whereType<String>()
         .firstOrNull;
   }
+
+  /// 获取分支列表
+  Future<List<String>> getBranchList() async {
+    try {
+      // 使用完整的API地址获取任务信息
+      final res = await global.dio.get(
+        '$jenkinsUrl/job/build_unity_hot_asset/api/json?pretty=true',
+        options: Options(
+          headers: {
+            'Authorization': getAuthHeader(),
+          },
+        ),
+      );
+
+      print('Jenkins API响应: ${res.data}');
+
+      // 首先尝试从actions数组中查找参数定义
+      final actions = JSON(res.data)['actions'].listValue;
+      print('Actions: $actions');
+
+      for (final action in actions) {
+        final actionClass = JSON(action)['_class'].stringValue;
+        print('Action class: $actionClass');
+
+        // 查找参数定义属性
+        if (actionClass == 'hudson.model.ParametersDefinitionProperty') {
+          final parameterDefinitions =
+              JSON(action)['parameterDefinitions'].listValue;
+          print('参数定义: $parameterDefinitions');
+
+          // 查找branch参数的定义
+          for (final param in parameterDefinitions) {
+            final name = JSON(param)['name'].stringValue;
+            final paramClass = JSON(param)['_class'].stringValue;
+            print('参数名称: $name, 类型: $paramClass');
+
+            if (name == 'branch') {
+              // 根据参数类型处理
+              if (paramClass == 'hudson.model.ChoiceParameterDefinition') {
+                final choices = JSON(param)['choices'].listValue;
+                print('choices列表: $choices');
+                return choices
+                    .map((e) => e.toString())
+                    .whereType<String>()
+                    .toList();
+              } else if (paramClass ==
+                  'hudson.model.StringParameterDefinition') {
+                // 如果是字符串参数，尝试获取默认值
+                final defaultValue =
+                    JSON(param)['defaultParameterValue']['value'].stringValue;
+                if (defaultValue.isNotEmpty) {
+                  return [defaultValue];
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 如果actions中没有找到，尝试从property数组中查找
+      final properties = JSON(res.data)['property'].listValue;
+      print('Properties: $properties');
+
+      for (final property in properties) {
+        final propertyClass = JSON(property)['_class'].stringValue;
+        print('Property class: $propertyClass');
+
+        // 查找参数定义属性
+        if (propertyClass == 'hudson.model.ParametersDefinitionProperty') {
+          final parameterDefinitions =
+              JSON(property)['parameterDefinitions'].listValue;
+          print('参数定义: $parameterDefinitions');
+
+          // 查找branch参数的定义
+          for (final param in parameterDefinitions) {
+            final name = JSON(param)['name'].stringValue;
+            final paramClass = JSON(param)['_class'].stringValue;
+            print('参数名称: $name, 类型: $paramClass');
+
+            if (name == 'branch') {
+              // 根据参数类型处理
+              if (paramClass == 'hudson.model.ChoiceParameterDefinition') {
+                final choices = JSON(param)['choices'].listValue;
+                print('choices列表: $choices');
+                return choices
+                    .map((e) => e.toString())
+                    .whereType<String>()
+                    .toList();
+              } else if (paramClass ==
+                  'hudson.model.StringParameterDefinition') {
+                // 如果是字符串参数，尝试获取默认值
+                final defaultValue =
+                    JSON(param)['defaultParameterValue']['value'].stringValue;
+                if (defaultValue.isNotEmpty) {
+                  return [defaultValue];
+                }
+              }
+            }
+          }
+        }
+      }
+
+      print('没有找到branch参数定义');
+      return [];
+    } catch (e) {
+      print('获取分支列表时发生错误: $e');
+      return [];
+    }
+  }
 }
