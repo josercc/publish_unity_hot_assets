@@ -11,6 +11,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart' hide FormData, MultipartFile;
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/modules/home/datas/task.dart';
 import 'package:xml2json/xml2json.dart';
@@ -77,16 +78,31 @@ class HomeController extends GetxController {
   /// 是否强制上传
   final isForceUpload = false.obs;
 
+  /// 当前环境
+  final curEnvironment = Environment.test.obs;
+
   @override
   void onInit() {
     super.onInit();
     setDate(DateTime.now());
     setTime(TimeOfDay.now());
     Future.sync(() async {
+      await loadCurrentEnvironment();
       await loadUnityBranchList();
       await updateLocalResourcePath();
       await loadMinVersion();
     });
+  }
+
+  /// 加载当前环境
+  Future<void> loadCurrentEnvironment() async {
+    try {
+      // 直接使用GlobalServer中存储的环境信息
+      curEnvironment.value = global.currentEnvironment ?? Environment.test;
+    } catch (e) {
+      print('加载当前环境失败: $e');
+      curEnvironment.value = Environment.test;
+    }
   }
 
   /// 加载最低兼容版本
@@ -160,6 +176,54 @@ class HomeController extends GetxController {
       curBuildConfiguration.value.name,
     );
     localResourcePathController.text = hotUpdateDir;
+  }
+
+  /// 发布热更新版本（带确认弹框）
+  Future<void> releaseHotUpdateVersionWithConfirmation() async {
+    // 如果是生产环境，显示确认弹框
+    if (curEnvironment.value == Environment.prod) {
+      final confirmed = await _showProductionConfirmationDialog();
+      if (!confirmed) {
+        return; // 用户取消发布
+      }
+    }
+
+    // 执行发布
+    await releaseHotUpdateVersion();
+  }
+
+  /// 显示生产环境确认弹框
+  Future<bool> _showProductionConfirmationDialog() async {
+    return await Get.dialog<bool>(
+          AlertDialog(
+            title: const Text('⚠️ 生产环境发布确认'),
+            content: const Text(
+              '您即将发布到生产环境，此操作将影响线上用户。\n\n'
+              '请确认以下信息：\n'
+              '• 版本号是否正确\n'
+              '• 资源包描述是否准确\n'
+              '• 发布时间是否合适\n'
+              '• 兼容版本范围是否正确\n\n'
+              '确定要继续发布吗？',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Get.back(result: false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Get.back(result: true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('确认发布'),
+              ),
+            ],
+          ),
+          barrierDismissible: false,
+        ) ??
+        false;
   }
 
   releaseHotUpdateVersion() async {

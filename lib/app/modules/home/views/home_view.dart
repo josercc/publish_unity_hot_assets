@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'package:get/get.dart';
+import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/modules/home/datas/task.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 import 'package:quickalert/quickalert.dart';
@@ -33,6 +34,64 @@ class HomeView extends GetView<HomeController> {
               final taskList = controller.taskList;
               return Column(
                 children: [
+                  ListTile(
+                    title: _buildTitle('当前环境'),
+                    subtitle: Obx(
+                      () {
+                        String environmentName =
+                            switch (controller.curEnvironment.value) {
+                          Environment.test => '测试环境',
+                          Environment.prod => '生产环境',
+                        };
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: controller.curEnvironment.value ==
+                                    Environment.prod
+                                ? Colors.red.withOpacity(0.1)
+                                : Colors.green.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: controller.curEnvironment.value ==
+                                      Environment.prod
+                                  ? Colors.red
+                                  : Colors.green,
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                controller.curEnvironment.value ==
+                                        Environment.prod
+                                    ? Icons.warning
+                                    : Icons.check_circle,
+                                color: controller.curEnvironment.value ==
+                                        Environment.prod
+                                    ? Colors.red
+                                    : Colors.green,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                environmentName,
+                                style: TextStyle(
+                                  color: controller.curEnvironment.value ==
+                                          Environment.prod
+                                      ? Colors.red
+                                      : Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
                   ListTile(
                     title: _buildTitle('平台'),
                     subtitle: Obx(
@@ -295,7 +354,7 @@ class HomeView extends GetView<HomeController> {
 
   _publishHotVersion() async {
     try {
-      await controller.releaseHotUpdateVersion();
+      await controller.releaseHotUpdateVersionWithConfirmation();
       QuickAlert.show(
         context: Get.context!,
         type: QuickAlertType.success,

@@ -118,6 +118,7 @@ $gmallKey
     // 执行加密
     final encryptedPassword = await encryptRSA(password, publicKeyPem);
     global.gmallUrl = gmallUrl;
+    global.currentEnvironment = curEnv.value; // 设置当前环境
     await loginGmall(userName, encryptedPassword);
 
     bool isLogin = await jenkinsApi.verifyLogin();

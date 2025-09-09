@@ -1,6 +1,7 @@
 import 'package:darty_json_safe/darty_json_safe.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:dio/dio.dart';
+import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins_api.dart';
 
 GlobalServer get global => Get.find();
@@ -9,6 +10,7 @@ class GlobalServer extends GetxService {
   final dio = Dio();
   String? token;
   String? gmallUrl;
+  Environment? currentEnvironment;
 
   JenkinsApi? jenkinsApi;
 
