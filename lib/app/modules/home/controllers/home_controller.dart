@@ -706,15 +706,20 @@ class DownloadZipUrlTask extends Task<String> {
     );
     print(hotUpdateDir);
     final zipPath = join(hotUpdateDir, 'hot_update.zip');
-    if (await File(zipPath).exists()) {
-      await File(zipPath).delete();
-    }
     final hotUpdateAssetDir = Directory(join(hotUpdateDir, 'Assets'));
 
+    // 始终在下载前删除本地已存在的路径
+    status.value = TaskStatus.fromCode(
+      TaskStatusCode.processing,
+      '正在清理本地已存在的资源路径...',
+    );
+
+    // 删除整个目录（包括zip包和所有子文件）
+    if (await Directory(hotUpdateDir).exists()) {
+      await Directory(hotUpdateDir).delete(recursive: true);
+    }
+
     if (!isSkipDownload) {
-      if (await Directory(hotUpdateDir).exists()) {
-        await Directory(hotUpdateDir).delete(recursive: true);
-      }
       await global.jenkinsApi?.downloadZipUrl(
         platform: platform,
         buildConfiguration: buildConfiguration,
