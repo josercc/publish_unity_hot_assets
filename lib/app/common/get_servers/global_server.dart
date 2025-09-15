@@ -33,8 +33,21 @@ class GlobalServer extends GetxService {
       onSendProgress: onSendProgress,
     )
         .catchError((e) {
-      print(e);
-      throw e;
+      print('请求失败 - URL: $url');
+      print('请求失败 - 错误信息: $e');
+      // 创建一个包含URL信息的错误
+      if (e is DioException) {
+        final errorMessage =
+            '请求失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          type: e.type,
+          error: errorMessage,
+        );
+      } else {
+        throw Exception('请求失败\nURL: $url\n错误: $e');
+      }
     });
     print(res.data);
     return res;

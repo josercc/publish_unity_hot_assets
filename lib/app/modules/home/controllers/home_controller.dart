@@ -86,12 +86,48 @@ class HomeController extends GetxController {
     super.onInit();
     setDate(DateTime.now());
     setTime(TimeOfDay.now());
-    Future.sync(() async {
+    _initializeData();
+  }
+
+  /// 初始化数据，带错误处理
+  Future<void> _initializeData() async {
+    try {
       await loadCurrentEnvironment();
+    } catch (e) {
+      print('加载当前环境失败: $e');
+    }
+
+    try {
       await loadUnityBranchList();
+    } catch (e) {
+      print('加载Unity分支列表失败: $e');
+    }
+
+    try {
       await updateLocalResourcePath();
+    } catch (e) {
+      print('更新本地资源路径失败: $e');
+    }
+
+    try {
       await loadMinVersion();
-    });
+    } catch (e) {
+      print('加载最低版本失败: $e');
+    }
+  }
+
+  @override
+  void onClose() {
+    // 释放所有TextEditingController资源
+    descController.dispose();
+    dateController.dispose();
+    timeController.dispose();
+    versionController.dispose();
+    minVersionController.dispose();
+    maxVersionController.dispose();
+    unityBranchController.dispose();
+    localResourcePathController.dispose();
+    super.onClose();
   }
 
   /// 加载当前环境
@@ -122,7 +158,7 @@ class HomeController extends GetxController {
       final success = JSON(e.data)['success'].boolValue;
       final message = JSON(e.data)['message'].string ?? '未知错误';
       if (!success) {
-        throw message;
+        throw '查询应用版本列表失败\nURL: ${global.gmallUrl}/api/platformservice/appManager/queryAppVersionList\n错误: $message';
       }
       final dataList = JSON(e.data)['data']['list'].listValue;
       return dataList.map((e) => JSON(e)['version'].stringValue).toList();
@@ -251,15 +287,30 @@ class HomeController extends GetxController {
       throw const ToastException('请输入版本号');
     }
 
-    /// 版本号必须是 vx.x.x 格式的
-    // final versionReg = RegExp(r'^v\d+\.\d+\.\d+$');
-    // if (!versionReg.hasMatch(version)) {
-    //   throw const ToastException('版本号必须是 vx.x.x 格式的');
-    // }
+    /// 版本号格式验证（支持多种格式）
+    final versionReg = RegExp(r'^(v)?\d+\.\d+\.\d+$');
+    if (!versionReg.hasMatch(version)) {
+      throw const ToastException('版本号格式不正确，请使用 x.x.x 或 vx.x.x 格式');
+    }
 
     final minVersion = minVersionController.text;
     if (minVersion.isEmpty) {
       throw const ToastException('请输入最低兼容版本');
+    }
+
+    final maxVersion = maxVersionController.text;
+    if (maxVersion.isNotEmpty) {
+      // 验证最高版本格式
+      if (!versionReg.hasMatch(maxVersion)) {
+        throw const ToastException('最高兼容版本格式不正确，请使用 x.x.x 或 vx.x.x 格式');
+      }
+
+      // 验证版本号大小关系
+      final minVersionNum = _parseVersionNumber(minVersion);
+      final maxVersionNum = _parseVersionNumber(maxVersion);
+      if (minVersionNum >= maxVersionNum) {
+        throw const ToastException('最低兼容版本必须小于最高兼容版本');
+      }
     }
 
     if (!isSkipBuild.value) {
@@ -391,6 +442,23 @@ class HomeController extends GetxController {
       timeController.text = '';
     }
   }
+
+  /// 解析版本号为数字，用于比较
+  int _parseVersionNumber(String version) {
+    // 移除可能的 'v' 前缀
+    final cleanVersion = version.replaceFirst(RegExp(r'^v'), '');
+    final parts = cleanVersion.split('.');
+    if (parts.length != 3) return 0;
+
+    try {
+      final major = int.parse(parts[0]);
+      final minor = int.parse(parts[1]);
+      final patch = int.parse(parts[2]);
+      return major * 10000 + minor * 100 + patch;
+    } catch (e) {
+      return 0;
+    }
+  }
 }
 
 /// 打包资源任务
@@ -451,22 +519,54 @@ class PackResourceTask extends Task<void> {
   Future<bool> queryBuildResult(int buildNumber) async {
     Completer<bool> completer = Completer<bool>();
     DateTime startTime = DateTime.now();
-    Timer.periodic(const Duration(seconds: 3), (timer) async {
-      status.value = TaskStatus.fromCode(
-        TaskStatusCode.processing,
-        '正在查询构建结果...已等待${DateTime.now().difference(startTime).inSeconds}秒',
-      );
-      final result = await global.jenkinsApi?.queryBuildResult(
-        buildNumber: buildNumber,
-      );
-      if (result == 'SUCCESS') {
-        timer.cancel();
-        completer.complete(true);
-      } else if (result == 'FAILURE') {
-        timer.cancel();
+    Timer? timer;
+
+    // 设置超时时间（3小时，适合大型Unity项目）
+    const timeoutSeconds = 10800; // 3小时
+    const timeoutHours = 3;
+
+    timer = Timer.periodic(const Duration(seconds: 3), (periodicTimer) async {
+      try {
+        final elapsedSeconds = DateTime.now().difference(startTime).inSeconds;
+
+        // 设置超时时间
+        if (elapsedSeconds > timeoutSeconds) {
+          timer?.cancel();
+          status.value = TaskStatus.fromCode(
+            TaskStatusCode.error,
+            '查询构建结果超时（${timeoutHours}小时）',
+          );
+          completer.complete(false);
+          return;
+        }
+
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.processing,
+          '正在查询构建结果...已等待${elapsedSeconds}秒',
+        );
+
+        final result = await global.jenkinsApi?.queryBuildResult(
+          buildNumber: buildNumber,
+        );
+
+        if (result == 'SUCCESS') {
+          timer?.cancel();
+          completer.complete(true);
+        } else if (result == 'FAILURE') {
+          timer?.cancel();
+          completer.complete(false);
+        }
+        // 如果result为null或其他值，继续等待
+      } catch (e) {
+        timer?.cancel();
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.error,
+          '查询构建结果失败: $e',
+        );
         completer.complete(false);
       }
     });
+
     return completer.future;
   }
 }
@@ -559,9 +659,15 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
   /// 计算文件的 md5
   Future<String> computeMd5() async {
     print('正在计算${file.path}的 md5');
-    final content = file.openRead();
-    final digest = await crypto.md5.bind(content).first;
-    return digest.toString();
+    try {
+      final content = file.openRead();
+      final digest = await crypto.md5.bind(content).first;
+      // Stream会自动关闭，不需要手动调用close
+      return digest.toString();
+    } catch (e) {
+      print('计算MD5失败: $e');
+      rethrow;
+    }
   }
 
   /// 根据 md5 查询网络图片地址
@@ -581,7 +687,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     final success = JSON(response.data)['success'].boolValue;
     final message = JSON(response.data)['message'].string ?? '未知错误';
     if (!success) {
-      throw message;
+      throw '查询MD5失败\nURL: ${global.gmallUrl}/api/platformservice/md5/find\n错误: $message';
     }
     final data = JSON(response.data)['data'].listValue;
     return JSON(data)[0]['url'].string;
@@ -610,11 +716,11 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     final success = JSON(response.data)['success'].boolValue;
     final message = JSON(response.data)['message'].string ?? '未知错误';
     if (!success) {
-      throw message;
+      throw '获取上传ID失败\nURL: ${global.gmallUrl}/api/platformservice/file/initiatePartFileUpload\n错误: $message';
     }
     final uploadId = JSON(response.data)['data']['uploadId'].string;
     if (uploadId == null) {
-      throw '上传 Id 不能为空';
+      throw '上传 Id 不能为空\nURL: ${global.gmallUrl}/api/platformservice/file/initiatePartFileUpload';
     }
     return uploadId;
   }
@@ -646,7 +752,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     final success = JSON(response.data)['success'].boolValue;
     final message = JSON(response.data)['message'].string ?? '未知错误';
     if (!success) {
-      throw message;
+      throw '上传切片失败\nURL: ${global.gmallUrl}/api/platformservice/file/uploadPart\n错误: $message';
     }
     return JSON(response.data)['data']['totalPartNumber'].intValue;
   }
@@ -672,11 +778,11 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     final success = JSON(response.data)['success'].boolValue;
     final message = JSON(response.data)['message'].string ?? '未知错误';
     if (!success) {
-      throw message;
+      throw '合并切片失败\nURL: ${global.gmallUrl}/api/platformservice/file/completeUpload\n错误: $message';
     }
     final url = JSON(response.data)['data']['fileUrl'].string;
     if (url == null) {
-      throw '合并切片失败';
+      throw '合并切片失败\nURL: ${global.gmallUrl}/api/platformservice/file/completeUpload';
     }
     return url;
   }
@@ -813,7 +919,7 @@ class ReleaseHotUpdateVersionTask extends Task<void> {
     final success = JSON(response.data)['success'].boolValue;
     final message = JSON(response.data)['message'].string ?? '未知错误';
     if (!success) {
-      throw message;
+      throw '发布热更新版本失败\nURL: ${global.gmallUrl}/api/platformservice/sceneResourceManager/saveSceneResource\n错误: $message';
     }
   }
 }

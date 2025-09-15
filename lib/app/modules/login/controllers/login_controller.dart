@@ -60,12 +60,24 @@ class LoginController extends GetxController {
       showErrorToast('请输入 Gmall 请求地址');
       return;
     }
+    // 验证URL格式
+    if (!_isValidUrl(gmallUrl)) {
+      showErrorToast('Gmall 请求地址格式不正确');
+      return;
+    }
+
     if (gmallKey.isEmpty) {
       showErrorToast('请输入 Gmall 密钥');
       return;
     }
+
     if (jenkinsUrl.isEmpty) {
       showErrorToast('请输入 Jenkins 请求地址');
+      return;
+    }
+    // 验证Jenkins URL格式
+    if (!_isValidUrl(jenkinsUrl)) {
+      showErrorToast('Jenkins 请求地址格式不正确');
       return;
     }
     if (userName.isEmpty) {
@@ -137,7 +149,7 @@ $gmallKey
     });
     final token = JSON(res)['token'].string;
     if (token == null) {
-      throw 'Gmall 账户登录失败';
+      throw 'Gmall 账户登录失败\nURL: ${global.gmallUrl}/login/portalLogin';
     }
     global.token = token;
   }
@@ -169,5 +181,15 @@ $gmallKey
       jenkinsPasswordTextController.clear();
     }
     SmartDialog.dismiss();
+  }
+
+  /// 验证URL格式
+  bool _isValidUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https');
+    } catch (e) {
+      return false;
+    }
   }
 }

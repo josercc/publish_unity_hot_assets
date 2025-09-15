@@ -90,8 +90,11 @@ class LoginView extends GetView<LoginController> {
                     } catch (e) {
                       SmartDialog.dismiss();
                       if (e is DioException) {
-                        showErrorToast(
-                            e.response?.statusMessage ?? e.toString());
+                        // 显示包含URL信息的错误
+                        final errorMessage = e.error?.toString() ??
+                            e.response?.statusMessage ??
+                            e.toString();
+                        showErrorToast(errorMessage);
                       } else {
                         showErrorToast(e.toString());
                       }

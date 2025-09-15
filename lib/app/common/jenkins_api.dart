@@ -25,9 +25,10 @@ class JenkinsApi {
 
   /// 验证登录
   Future<bool> verifyLogin() async {
+    final url = '$jenkinsUrl/user/$jenkinsUserName/api/json?pretty=true';
     final res = await global.dio
         .get(
-      '$jenkinsUrl/user/$jenkinsUserName/api/json?pretty=true',
+      url,
       options: Options(
         headers: {
           'Authorization': getAuthHeader(),
@@ -35,7 +36,20 @@ class JenkinsApi {
       ),
     )
         .catchError((e) {
-      throw e;
+      print('Jenkins验证登录失败 - URL: $url');
+      print('Jenkins验证登录失败 - 错误信息: $e');
+      if (e is DioException) {
+        final errorMessage =
+            'Jenkins验证登录失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          type: e.type,
+          error: errorMessage,
+        );
+      } else {
+        throw Exception('Jenkins验证登录失败\nURL: $url\n错误: $e');
+      }
     });
     final property = JSON(res.data)['property'].listValue;
     return property.isNotEmpty;
@@ -89,25 +103,56 @@ class JenkinsApi {
       ),
     )
         .catchError((e) {
-      print(e.toString());
-      throw e;
+      print('Jenkins开启打包失败 - URL: $url');
+      print('Jenkins开启打包失败 - 错误信息: $e');
+      if (e is DioException) {
+        final errorMessage =
+            'Jenkins开启打包失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          type: e.type,
+          error: errorMessage,
+        );
+      } else {
+        throw Exception('Jenkins开启打包失败\nURL: $url\n错误: $e');
+      }
     });
     return res.statusCode == 201;
   }
 
   /// 获取最后一个构建号
   Future<int> getLastBuildNumber() async {
-    final res = await global.dio.get(
-      '$jenkinsUrl/job/build_unity_hot_asset/lastBuild/api/json?pretty=true',
+    final url =
+        '$jenkinsUrl/job/build_unity_hot_asset/lastBuild/api/json?pretty=true';
+    final res = await global.dio
+        .get(
+      url,
       options: Options(
         headers: {
           'Authorization': getAuthHeader(),
         },
       ),
-    );
+    )
+        .catchError((e) {
+      print('Jenkins获取构建号失败 - URL: $url');
+      print('Jenkins获取构建号失败 - 错误信息: $e');
+      if (e is DioException) {
+        final errorMessage =
+            'Jenkins获取构建号失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          type: e.type,
+          error: errorMessage,
+        );
+      } else {
+        throw Exception('Jenkins获取构建号失败\nURL: $url\n错误: $e');
+      }
+    });
     int? lastBuildNumber = JSON(res.data)['number'].int;
     if (lastBuildNumber == null) {
-      throw '获取最后一个构建号失败';
+      throw '获取最后一个构建号失败\nURL: $url';
     }
     return lastBuildNumber;
   }
@@ -116,14 +161,33 @@ class JenkinsApi {
   Future<String?> queryBuildResult({
     required int buildNumber,
   }) async {
-    final res = await global.dio.get(
-      '$jenkinsUrl/job/build_unity_hot_asset/$buildNumber/api/json?pretty=true',
+    final url =
+        '$jenkinsUrl/job/build_unity_hot_asset/$buildNumber/api/json?pretty=true';
+    final res = await global.dio
+        .get(
+      url,
       options: Options(
         headers: {
           'Authorization': getAuthHeader(),
         },
       ),
-    );
+    )
+        .catchError((e) {
+      print('Jenkins查询构建结果失败 - URL: $url');
+      print('Jenkins查询构建结果失败 - 错误信息: $e');
+      if (e is DioException) {
+        final errorMessage =
+            'Jenkins查询构建结果失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+        throw DioException(
+          requestOptions: e.requestOptions,
+          response: e.response,
+          type: e.type,
+          error: errorMessage,
+        );
+      } else {
+        throw Exception('Jenkins查询构建结果失败\nURL: $url\n错误: $e');
+      }
+    });
     return JSON(res.data)['result'].string;
   }
 
@@ -160,15 +224,33 @@ class JenkinsApi {
   /// 获取分支列表
   Future<List<String>> getBranchList() async {
     try {
+      final url = '$jenkinsUrl/job/build_unity_hot_asset/api/json?pretty=true';
       // 使用完整的API地址获取任务信息
-      final res = await global.dio.get(
-        '$jenkinsUrl/job/build_unity_hot_asset/api/json?pretty=true',
+      final res = await global.dio
+          .get(
+        url,
         options: Options(
           headers: {
             'Authorization': getAuthHeader(),
           },
         ),
-      );
+      )
+          .catchError((e) {
+        print('Jenkins获取分支列表失败 - URL: $url');
+        print('Jenkins获取分支列表失败 - 错误信息: $e');
+        if (e is DioException) {
+          final errorMessage =
+              'Jenkins获取分支列表失败\nURL: $url\n错误: ${e.message ?? e.toString()}';
+          throw DioException(
+            requestOptions: e.requestOptions,
+            response: e.response,
+            type: e.type,
+            error: errorMessage,
+          );
+        } else {
+          throw Exception('Jenkins获取分支列表失败\nURL: $url\n错误: $e');
+        }
+      });
 
       print('Jenkins API响应: ${res.data}');
 
