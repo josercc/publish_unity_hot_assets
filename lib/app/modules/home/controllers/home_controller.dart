@@ -495,13 +495,32 @@ class PackResourceTask extends Task<void> {
     }
 
     final lastBuildNumber = await jenkinsApi.getLastBuildNumber();
-    print(lastBuildNumber);
+    print('当前最新构建号: $lastBuildNumber');
+
+    status.value = TaskStatus.fromCode(
+      TaskStatusCode.processing,
+      '正在启动Jenkins构建...',
+    );
+
     await jenkinsApi.startBuild(
       platform: platform,
       buildConfiguration: buildConfiguration,
       branch: branch,
     );
-    final result = await queryBuildResult(lastBuildNumber + 1);
+
+    final newBuildNumber = lastBuildNumber + 1;
+    print('新构建号: $newBuildNumber');
+
+    status.value = TaskStatus.fromCode(
+      TaskStatusCode.processing,
+      '构建已启动（构建号: $newBuildNumber），正在等待Jenkins开始执行...',
+    );
+
+    // 等待Jenkins开始执行新构建
+    await waitForBuildToStart(newBuildNumber);
+
+    // 开始监控构建结果
+    final result = await queryBuildResult(newBuildNumber);
     if (result) {
       status.value = TaskStatus.fromCode(
         TaskStatusCode.success,
@@ -512,6 +531,47 @@ class PackResourceTask extends Task<void> {
         TaskStatusCode.error,
         '打包失败',
       );
+      throw Exception('Jenkins构建失败，构建号: $newBuildNumber');
+    }
+  }
+
+  /// 等待Jenkins开始执行新构建
+  Future<void> waitForBuildToStart(int expectedBuildNumber) async {
+    final jenkinsApi = global.jenkinsApi;
+    if (jenkinsApi == null) {
+      throw 'jenkinsApi 不能为空';
+    }
+
+    DateTime startTime = DateTime.now();
+    int waitSeconds = 0;
+
+    while (true) {
+      try {
+        final currentLastBuildNumber = await jenkinsApi.getLastBuildNumber();
+
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.processing,
+          '等待Jenkins开始执行构建（期望: $expectedBuildNumber，当前最新: $currentLastBuildNumber）...已等待${waitSeconds}秒',
+        );
+
+        if (currentLastBuildNumber >= expectedBuildNumber) {
+          print('Jenkins已开始执行构建 $expectedBuildNumber');
+          status.value = TaskStatus.fromCode(
+            TaskStatusCode.processing,
+            'Jenkins已开始执行构建 $expectedBuildNumber，开始监控构建进度...',
+          );
+          return;
+        }
+
+        // 等待1秒后重试
+        await Future.delayed(const Duration(seconds: 1));
+        waitSeconds = DateTime.now().difference(startTime).inSeconds;
+      } catch (e) {
+        print('等待构建开始时发生错误: $e');
+        // 如果获取构建号失败，继续等待
+        await Future.delayed(const Duration(seconds: 1));
+        waitSeconds = DateTime.now().difference(startTime).inSeconds;
+      }
     }
   }
 
@@ -540,9 +600,19 @@ class PackResourceTask extends Task<void> {
           return;
         }
 
+        // 显示构建执行状态
+        String statusMessage;
+        if (elapsedSeconds < 60) {
+          statusMessage =
+              'Jenkins构建执行中（构建号: $buildNumber）...已等待${elapsedSeconds}秒';
+        } else {
+          statusMessage =
+              'Jenkins构建执行中（构建号: $buildNumber）...已等待${(elapsedSeconds / 60).toStringAsFixed(1)}分钟';
+        }
+
         status.value = TaskStatus.fromCode(
           TaskStatusCode.processing,
-          '正在查询构建结果...已等待${elapsedSeconds}秒',
+          statusMessage,
         );
 
         final result = await global.jenkinsApi?.queryBuildResult(
@@ -826,6 +896,11 @@ class DownloadZipUrlTask extends Task<String> {
     }
 
     if (!isSkipDownload) {
+      status.value = TaskStatus.fromCode(
+        TaskStatusCode.processing,
+        '开始下载热更新资源...',
+      );
+
       await global.jenkinsApi?.downloadZipUrl(
         platform: platform,
         buildConfiguration: buildConfiguration,
