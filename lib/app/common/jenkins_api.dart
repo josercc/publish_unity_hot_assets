@@ -65,13 +65,16 @@ class JenkinsApi {
     required String platform,
     required String buildConfiguration,
     required String zipPath,
+    required int buildNumber,
     void Function(int, int)? onReceiveProgress,
   }) async {
+    // 构建下载路径：使用新路径结构
     final zipUrl =
-        "$jenkinsUrl/job/build_unity_hot_asset/ws/HotUpdate/${platform.toLowerCase()}/$buildConfiguration/${platform.toUpperCase()}/UploadAssets/*zip*/UploadAssets.zip";
+        "$jenkinsUrl/job/build_unity_hot_asset/ws/HotUpdate/$buildNumber/${platform.toUpperCase()}/UploadAssets/*zip*/UploadAssets.zip";
     print('Jenkins下载资源 - 请求路径: $zipUrl');
     print('Jenkins下载资源 - 平台: $platform');
     print('Jenkins下载资源 - 构建配置: $buildConfiguration');
+    print('Jenkins下载资源 - 构建号: $buildNumber');
     print('Jenkins下载资源 - 本地保存路径: $zipPath');
 
     final zipFile = File(zipPath);
@@ -93,14 +96,15 @@ class JenkinsApi {
       print('Jenkins下载资源失败 - 请求路径: $zipUrl');
       print('Jenkins下载资源失败 - 平台: $platform');
       print('Jenkins下载资源失败 - 构建配置: $buildConfiguration');
+      print('Jenkins下载资源失败 - 构建号: $buildNumber');
       print('Jenkins下载资源失败 - 错误信息: $e');
       if (e is DioException) {
         if (e.response?.statusCode == 404) {
           throw Exception(
-              '资源文件不存在，可能构建尚未完成或构建失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\nHTTP状态码: 404\n请检查Jenkins构建状态');
+              '资源文件不存在，可能构建尚未完成或构建失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\n构建号: $buildNumber\nHTTP状态码: 404\n请检查Jenkins构建状态');
         }
         final errorMessage =
-            'Jenkins下载资源失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\nHTTP状态码: ${e.response?.statusCode}\n错误: ${e.message ?? e.toString()}';
+            'Jenkins下载资源失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\n构建号: $buildNumber\nHTTP状态码: ${e.response?.statusCode}\n错误: ${e.message ?? e.toString()}';
         throw DioException(
           requestOptions: e.requestOptions,
           response: e.response,
@@ -109,7 +113,7 @@ class JenkinsApi {
         );
       } else {
         throw Exception(
-            'Jenkins下载资源失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\n错误: $e');
+            'Jenkins下载资源失败\n请求路径: $zipUrl\n平台: $platform\n构建配置: $buildConfiguration\n构建号: $buildNumber\n错误: $e');
       }
     }
   }

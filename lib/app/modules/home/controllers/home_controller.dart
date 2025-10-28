@@ -313,6 +313,7 @@ class HomeController extends GetxController {
       }
     }
 
+    int buildNumber;
     if (!isSkipBuild.value) {
       /// 打资源
       final packTask = PackResourceTask(
@@ -323,6 +324,17 @@ class HomeController extends GetxController {
       taskList.value = [packTask];
       curTask.value = packTask;
       await packTask.execute();
+      if (packTask.buildNumber == null) {
+        throw Exception('构建号不能为空，构建任务未成功完成');
+      }
+      buildNumber = packTask.buildNumber!;
+    } else {
+      // 如果跳过构建，获取最后一个构建号
+      final jenkinsApi = global.jenkinsApi;
+      if (jenkinsApi == null) {
+        throw Exception('Jenkins API 未初始化');
+      }
+      buildNumber = await jenkinsApi.getLastBuildNumber();
     }
 
     /// 下载资源
@@ -330,6 +342,7 @@ class HomeController extends GetxController {
       platform: curPlatform.value,
       buildConfiguration: curBuildConfiguration.value.name,
       isSkipDownload: isSkipDownload.value,
+      buildNumber: buildNumber,
     );
     taskList.value = [downloadTask];
     curTask.value = downloadTask;
@@ -466,6 +479,8 @@ class PackResourceTask extends Task<void> {
   final String platform;
   final String buildConfiguration;
   final String branch;
+  int? buildNumber; // 构建号，在构建完成后设置
+
   PackResourceTask({
     required this.platform,
     required this.buildConfiguration,
@@ -509,6 +524,7 @@ class PackResourceTask extends Task<void> {
     );
 
     final newBuildNumber = lastBuildNumber + 1;
+    buildNumber = newBuildNumber; // 保存构建号
     print('新构建号: $newBuildNumber');
 
     status.value = TaskStatus.fromCode(
@@ -863,11 +879,13 @@ class DownloadZipUrlTask extends Task<String> {
   final String platform;
   final String buildConfiguration;
   final bool isSkipDownload;
+  final int buildNumber;
 
   DownloadZipUrlTask({
     required this.platform,
     required this.buildConfiguration,
     required this.isSkipDownload,
+    required this.buildNumber,
   }) : super(name: '从 Jenkins 下载热更新资源 Zip 包');
 
   @override
@@ -905,6 +923,7 @@ class DownloadZipUrlTask extends Task<String> {
         platform: platform,
         buildConfiguration: buildConfiguration,
         zipPath: zipPath,
+        buildNumber: buildNumber,
         onReceiveProgress: (p0, p1) {
           status.value = TaskStatus.fromCode(
             TaskStatusCode.processing,
