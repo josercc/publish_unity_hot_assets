@@ -300,10 +300,10 @@ class HomeController extends GetxController {
 
     final maxVersion = maxVersionController.text;
     if (maxVersion.isNotEmpty) {
-      // 验证最高版本格式
-      if (!versionReg.hasMatch(maxVersion)) {
-        throw const ToastException('最高兼容版本格式不正确，请使用 x.x.x 或 vx.x.x 格式');
-      }
+      // // 验证最高版本格式
+      // if (!versionReg.hasMatch(maxVersion)) {
+      //   throw const ToastException('最高兼容版本格式不正确，请使用 x.x.x 或 vx.x.x 格式');
+      // }
 
       // 验证版本号大小关系
       final minVersionNum = _parseVersionNumber(minVersion);
