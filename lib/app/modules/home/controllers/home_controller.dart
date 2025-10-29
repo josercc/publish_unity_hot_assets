@@ -376,6 +376,27 @@ class HomeController extends GetxController {
         isForceUpload: isForceUpload.value,
       ),
     ];
+
+    // 检查并添加 ABEditorManifests.xml 和 ABEditorManifests.bytes 文件（如果存在）
+    final abEditorManifestsXmlFile =
+        File(join(packPath, 'ABEditorManifests.xml'));
+    if (await abEditorManifestsXmlFile.exists()) {
+      uploadResTaskList.add(UploadResourceTask(
+        abEditorManifestsXmlFile,
+        await abEditorManifestsXmlFile.length(),
+        isForceUpload: isForceUpload.value,
+      ));
+    }
+
+    final abEditorManifestsBytesFile =
+        File(join(packPath, 'ABEditorManifests.bytes'));
+    if (await abEditorManifestsBytesFile.exists()) {
+      uploadResTaskList.add(UploadResourceTask(
+        abEditorManifestsBytesFile,
+        await abEditorManifestsBytesFile.length(),
+        isForceUpload: isForceUpload.value,
+      ));
+    }
     List<UploadResourceTask> uploadABTaskList = [];
     final assetBundleFiles = assetBundleDir.listSync().whereType<File>();
     for (final file in assetBundleFiles) {
