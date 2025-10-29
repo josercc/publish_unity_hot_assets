@@ -306,9 +306,8 @@ class HomeController extends GetxController {
       // }
 
       // 验证版本号大小关系
-      final minVersionNum = _parseVersionNumber(minVersion);
-      final maxVersionNum = _parseVersionNumber(maxVersion);
-      if (minVersionNum >= maxVersionNum) {
+      final comparisonResult = _compareVersions(minVersion, maxVersion);
+      if (comparisonResult >= 0) {
         throw const ToastException('最低兼容版本必须小于最高兼容版本');
       }
     }
@@ -456,22 +455,77 @@ class HomeController extends GetxController {
     }
   }
 
-  /// 解析版本号为数字，用于比较
-  int _parseVersionNumber(String version) {
+  /// 解析版本号和 build 号
+  /// 支持的格式：
+  /// - "2.0.8" -> version: "2.0.8", build: 0
+  /// - "2.0.8 (0)" -> version: "2.0.8", build: 0
+  /// - "2.0.9 (1)" -> version: "2.0.9", build: 1
+  _VersionParts _parseVersion(String version) {
     // 移除可能的 'v' 前缀
-    final cleanVersion = version.replaceFirst(RegExp(r'^v'), '');
-    final parts = cleanVersion.split('.');
-    if (parts.length != 3) return 0;
+    String cleanVersion = version.replaceFirst(RegExp(r'^v'), '').trim();
 
-    try {
-      final major = int.parse(parts[0]);
-      final minor = int.parse(parts[1]);
-      final patch = int.parse(parts[2]);
-      return major * 10000 + minor * 100 + patch;
-    } catch (e) {
-      return 0;
+    // 提取 build 号
+    int build = 0;
+    final buildMatch = RegExp(r'\(\s*(\d+)\s*\)').firstMatch(cleanVersion);
+    if (buildMatch != null) {
+      build = int.parse(buildMatch.group(1)!);
     }
+
+    // 移除 build 号部分
+    cleanVersion = cleanVersion.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+
+    return _VersionParts(cleanVersion, build);
   }
+
+  /// 比较两个版本
+  /// 返回负数表示 v1 < v2，返回 0 表示 v1 == v2，返回正数表示 v1 > v2
+  /// 先比较版本号，如果版本号相等则比较 build 号
+  int _compareVersions(String v1, String v2) {
+    final parts1 = _parseVersion(v1);
+    final parts2 = _parseVersion(v2);
+
+    // 先比较版本号
+    final versionComparison =
+        _compareVersionNumbers(parts1.version, parts2.version);
+    if (versionComparison != 0) {
+      return versionComparison;
+    }
+
+    // 版本号相等，比较 build 号
+    return parts1.build - parts2.build;
+  }
+
+  /// 比较版本号（不含 build 号）
+  /// 返回负数表示 v1 < v2，返回 0 表示 v1 == v2，返回正数表示 v1 > v2
+  int _compareVersionNumbers(String v1, String v2) {
+    final parts1 =
+        v1.split('.').map((e) => int.tryParse(e.trim()) ?? 0).toList();
+    final parts2 =
+        v2.split('.').map((e) => int.tryParse(e.trim()) ?? 0).toList();
+
+    // 补齐到相同长度
+    final maxLength =
+        parts1.length > parts2.length ? parts1.length : parts2.length;
+    while (parts1.length < maxLength) parts1.add(0);
+    while (parts2.length < maxLength) parts2.add(0);
+
+    // 逐段比较
+    for (int i = 0; i < maxLength; i++) {
+      if (parts1[i] != parts2[i]) {
+        return parts1[i] - parts2[i];
+      }
+    }
+
+    return 0;
+  }
+}
+
+/// 版本号解析结果
+class _VersionParts {
+  final String version;
+  final int build;
+
+  _VersionParts(this.version, this.build);
 }
 
 /// 打包资源任务
