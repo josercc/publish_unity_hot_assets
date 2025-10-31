@@ -243,9 +243,20 @@ class HomeView extends GetView<HomeController> {
                   /// 版本号
                   ListTile(
                     title: _buildTitle('版本号'),
-                    subtitle: CupertinoTextField(
-                      placeholder: '请输入版本号',
-                      controller: controller.versionController,
+                    subtitle: Row(
+                      children: [
+                        Expanded(
+                          child: CupertinoTextField(
+                            placeholder: '请输入版本号',
+                            controller: controller.versionController,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () => controller.autoFillVersion(),
+                          child: const Text('自动填充'),
+                        ),
+                      ],
                     ),
                   ),
 
@@ -354,12 +365,17 @@ class HomeView extends GetView<HomeController> {
 
   _publishHotVersion() async {
     try {
-      await controller.releaseHotUpdateVersionWithConfirmation();
-      QuickAlert.show(
-        context: Get.context!,
-        type: QuickAlertType.success,
-        title: '发布成功',
-      );
+      final success =
+          await controller.releaseHotUpdateVersionWithConfirmation();
+      // 如果返回 false，说明用户取消了发布，不显示任何提示
+      if (success) {
+        QuickAlert.show(
+          context: Get.context!,
+          type: QuickAlertType.success,
+          title: '发布成功',
+        );
+      }
+      // 如果返回 false，什么都不做，静默取消
     } on ToastException catch (e) {
       QuickAlert.show(
         context: Get.context!,

@@ -180,6 +180,8 @@ class HomeController extends GetxController {
         curUnityBranch.value = branches.first;
         unityBranchController.text = branches.first;
       }
+      // 如果资源包描述为空，设置默认值：当前分支 + 当前时间点
+      _updateDefaultDescription();
     } catch (e) {
       print('加载Unity分支列表失败: $e');
       SmartDialog.showToast('加载Unity分支列表失败: $e');
@@ -190,6 +192,36 @@ class HomeController extends GetxController {
   void selectUnityBranch(String branch) {
     curUnityBranch.value = branch;
     unityBranchController.text = branch;
+    // 更新资源包描述的默认值
+    _updateDefaultDescription();
+  }
+
+  /// 更新资源包描述的默认值（当前分支 + 当前时间点）
+  /// 只有在描述为空时才会设置默认值
+  void _updateDefaultDescription() {
+    // 如果用户已经手动填写了描述，则不覆盖
+    if (descController.text.isNotEmpty) {
+      return;
+    }
+
+    // 获取当前分支（如果有的话）
+    final branch = curUnityBranch.value.isNotEmpty
+        ? curUnityBranch.value
+        : unityBranchController.text.isNotEmpty
+            ? unityBranchController.text
+            : '';
+
+    // 获取当前时间点（格式：YYYY-MM-DD HH:mm:ss）
+    final now = DateTime.now();
+    final timeStr =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+
+    // 组合默认描述
+    if (branch.isNotEmpty) {
+      descController.text = '$branch $timeStr';
+    } else {
+      descController.text = timeStr;
+    }
   }
 
   /// 切换平台
@@ -215,32 +247,83 @@ class HomeController extends GetxController {
   }
 
   /// 发布热更新版本（带确认弹框）
-  Future<void> releaseHotUpdateVersionWithConfirmation() async {
-    // 如果是生产环境，显示确认弹框
-    if (curEnvironment.value == Environment.prod) {
-      final confirmed = await _showProductionConfirmationDialog();
-      if (!confirmed) {
-        return; // 用户取消发布
+  /// 返回 true 表示发布成功，false 表示用户取消，抛出异常表示发布失败
+  Future<bool> releaseHotUpdateVersionWithConfirmation() async {
+    // 在弹框前进行校验
+    final version = versionController.text.trim();
+    final minVersion = minVersionController.text.trim();
+    final maxVersion = maxVersionController.text.trim();
+
+    // 1. 检查版本号是否已被使用（如果填写了版本号）
+    if (version.isNotEmpty) {
+      await _checkVersionExists(version);
+    }
+
+    // 2. 校验最低版本和最高版本的大小关系
+    if (minVersion.isNotEmpty && maxVersion.isNotEmpty) {
+      final comparisonResult = _compareVersions(minVersion, maxVersion);
+      if (comparisonResult >= 0) {
+        throw const ToastException('最低兼容版本必须小于最高兼容版本');
       }
     }
 
-    // 执行发布
+    // 校验通过后，显示确认弹框
+    final confirmed = await _showPublishConfirmationDialog();
+    if (!confirmed) {
+      return false; // 用户取消发布
+    }
+
+    // 用户确认后，执行发布
     await releaseHotUpdateVersion();
+    return true; // 发布成功
   }
 
-  /// 显示生产环境确认弹框
-  Future<bool> _showProductionConfirmationDialog() async {
+  /// 显示发布确认弹框
+  Future<bool> _showPublishConfirmationDialog() async {
+    // 获取当前环境名称
+    String environmentName = switch (curEnvironment.value) {
+      Environment.test => '测试环境',
+      Environment.prod => '生产环境',
+    };
+
+    // 构建确认信息
+    final version =
+        versionController.text.isEmpty ? '未填写' : versionController.text;
+    final minVersion =
+        minVersionController.text.isEmpty ? '未填写' : minVersionController.text;
+    final maxVersion =
+        maxVersionController.text.isEmpty ? '未填写' : maxVersionController.text;
+    final desc = descController.text.isEmpty ? '未填写' : descController.text;
+    final publishTime =
+        dateController.text.isEmpty || timeController.text.isEmpty
+            ? '未填写'
+            : '${dateController.text} ${timeController.text}';
+
+    // 根据环境设置标题和颜色
+    final isProd = curEnvironment.value == Environment.prod;
+    final title = isProd ? '⚠️ 生产环境发布确认' : '📦 发布确认';
+    final confirmColor = isProd ? Colors.red : Colors.blue;
+
+    // 构建确认信息文本
+    final descDisplay = desc.isEmpty
+        ? '未填写'
+        : (desc.length > 50 ? '${desc.substring(0, 50)}...' : desc);
+    final warningText = isProd ? '\n⚠️ 您即将发布到生产环境，此操作将影响线上用户！' : '\n确定要继续发布吗？';
+
+    final confirmContent = '当前环境：$environmentName\n\n'
+        '请确认以下发布信息：\n'
+        '平台：${curPlatform.value}\n'
+        '版本号：$version\n'
+        '最低兼容版本：$minVersion\n'
+        '最高兼容版本：$maxVersion\n'
+        '发布时间：$publishTime\n'
+        '资源包描述：$descDisplay$warningText';
+
     return await Get.dialog<bool>(
           AlertDialog(
-            title: const Text('⚠️ 生产环境发布确认'),
-            content: const Text(
-              '您即将发布到生产环境，此操作将影响线上用户。\n\n'
-              '请确认以下信息：\n'
-              '• 版本号是否正确\n'
-              '• 资源包描述是否准确\n'
-              '• 发布时间是否合适\n'
-              '• 兼容版本范围是否正确\n\n'
-              '确定要继续发布吗？',
+            title: Text(title),
+            content: SingleChildScrollView(
+              child: Text(confirmContent),
             ),
             actions: [
               TextButton(
@@ -250,7 +333,7 @@ class HomeController extends GetxController {
               ElevatedButton(
                 onPressed: () => Get.back(result: true),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
+                  backgroundColor: confirmColor,
                   foregroundColor: Colors.white,
                 ),
                 child: const Text('确认发布'),
@@ -287,10 +370,10 @@ class HomeController extends GetxController {
       throw const ToastException('请输入版本号');
     }
 
-    /// 版本号格式验证（支持多种格式）
-    final versionReg = RegExp(r'^(v)?\d+\.\d+\.\d+$');
+    /// 版本号格式验证（支持 vx.y.z 格式，z 必须是5位数）
+    final versionReg = RegExp(r'^(v)?\d+\.\d+\.\d{5}$');
     if (!versionReg.hasMatch(version)) {
-      throw const ToastException('版本号格式不正确，请使用 x.x.x 或 vx.x.x 格式');
+      throw const ToastException('版本号格式不正确，请使用 vx.y.zzzzz 格式，其中 zzzzz 必须是5位数字');
     }
 
     final minVersion = minVersionController.text;
@@ -311,6 +394,8 @@ class HomeController extends GetxController {
         throw const ToastException('最低兼容版本必须小于最高兼容版本');
       }
     }
+
+    // 版本号检查已在弹框前完成，这里不需要再次检查
 
     int buildNumber;
     if (!isSkipBuild.value) {
@@ -538,6 +623,324 @@ class HomeController extends GetxController {
     }
 
     return 0;
+  }
+
+  /// 查询场景资源列表并自动填充版本号
+  Future<void> autoFillVersion() async {
+    try {
+      // 检查最低兼容版本是否已填写
+      final minVersion = minVersionController.text.trim();
+      if (minVersion.isEmpty) {
+        throw const ToastException('请先填写最低兼容版本');
+      }
+
+      // 检查最高兼容版本是否已填写
+      final maxVersion = maxVersionController.text.trim();
+      if (maxVersion.isEmpty) {
+        throw const ToastException('请先填写最高兼容版本');
+      }
+
+      // 校验最低版本必须小于最高版本
+      final comparisonResult = _compareVersions(minVersion, maxVersion);
+      if (comparisonResult >= 0) {
+        throw const ToastException('最低兼容版本必须小于最高兼容版本');
+      }
+
+      SmartDialog.showLoading(msg: '正在查询场景资源列表...');
+
+      // 请求所有数据，分页获取
+      List<dynamic> allDataList = [];
+      int pageNo = 1;
+      const pageSize = 20;
+      bool hasMore = true;
+
+      while (hasMore) {
+        final response = await global.post(
+          path:
+              '/api/platformservice/sceneResourceManager/querySceneSourceList',
+          data: {
+            'page': {
+              'pageSize': pageSize,
+              'pageNo': pageNo,
+            },
+          },
+        );
+
+        final success = JSON(response.data)['success'].boolValue;
+        final message = JSON(response.data)['message'].string ?? '未知错误';
+        if (!success) {
+          SmartDialog.dismiss();
+          throw ToastException('查询场景资源列表失败\n错误: $message');
+        }
+
+        final pageData = JSON(response.data)['data'];
+        final list = pageData['list'].listValue;
+        final total = pageData['total'].intValue;
+
+        // 将当前页数据添加到总列表
+        allDataList.addAll(list);
+
+        // 检查是否还有更多数据
+        if (allDataList.length >= total || list.isEmpty) {
+          hasMore = false;
+        } else {
+          pageNo++;
+        }
+      }
+
+      SmartDialog.dismiss();
+
+      // 筛选数据
+      // 1. 根据平台（client）筛选
+      // 2. status = 1
+      // 3. minCompatibleVersion 和当前最低版本一致（需要提取版本号部分进行比较）
+      // 4. highCompatibleVersion 和当前最高版本一致（需要提取版本号部分进行比较）
+      final filteredList = allDataList.where((item) {
+        final jsonItem = JSON(item);
+        final client = jsonItem['client'].stringValue;
+        final status = jsonItem['status'].intValue;
+        final minCompatibleVersion =
+            jsonItem['minCompatibleVersion'].stringValue;
+        final highCompatibleVersion =
+            jsonItem['highCompatibleVersion'].stringValue;
+
+        // 提取版本号部分（移除 v 前缀和 build 号）
+        final parsedMinVersion = _extractVersionNumber(minCompatibleVersion);
+        final parsedHighVersion = _extractVersionNumber(highCompatibleVersion);
+        final parsedInputMinVersion = _extractVersionNumber(minVersion);
+        final parsedInputMaxVersion = _extractVersionNumber(maxVersion);
+
+        return client == curPlatform.value &&
+            status == 1 &&
+            parsedMinVersion == parsedInputMinVersion &&
+            parsedHighVersion == parsedInputMaxVersion;
+      }).toList();
+
+      String nextVersion;
+
+      if (filteredList.isEmpty) {
+        // 如果未找到符合条件的场景资源，基于最低版本号生成初始版本号
+        // 例如：2.0.5 (0) -> 2.0.50000
+        nextVersion = _generateInitialVersion(minVersion);
+        versionController.text = nextVersion;
+        SmartDialog.showToast('未找到符合条件的场景资源，已生成初始版本号: $nextVersion');
+        return;
+      }
+
+      // 找到版本最高的
+      String? maxVersionStr;
+      for (final item in filteredList) {
+        final version = JSON(item)['version'].stringValue;
+        if (version.isEmpty) continue;
+
+        if (maxVersionStr == null) {
+          maxVersionStr = version;
+        } else {
+          // 比较版本号，找到最高的
+          if (_compareVersions(version, maxVersionStr) > 0) {
+            maxVersionStr = version;
+          }
+        }
+      }
+
+      if (maxVersionStr == null || maxVersionStr.isEmpty) {
+        // 如果没有找到有效的版本号，也基于最低版本号生成初始版本号
+        nextVersion = _generateInitialVersion(minVersion);
+      } else {
+        // 版本号自动+1
+        // 例如：v2.0.50001 -> v2.0.50002
+        nextVersion = _incrementVersion(maxVersionStr);
+      }
+
+      // 验证生成的版本号格式是否符合规范（vx.y.z 格式，z 必须是5位数）
+      final versionReg = RegExp(r'^(v)?\d+\.\d+\.\d{5}$');
+      if (!versionReg.hasMatch(nextVersion)) {
+        SmartDialog.dismiss();
+        throw ToastException(
+            '自动生成的版本号格式不正确: $nextVersion，版本号格式应为 vx.y.zzzzz（其中 zzzzz 必须是5位数字），请手动输入版本号');
+      }
+
+      versionController.text = nextVersion;
+
+      if (maxVersionStr == null || maxVersionStr.isEmpty) {
+        SmartDialog.showToast('未找到有效的版本号，已生成初始版本号: $nextVersion');
+      } else {
+        SmartDialog.showToast('已自动填充版本号: $nextVersion');
+      }
+    } catch (e) {
+      SmartDialog.dismiss();
+      if (e is ToastException) {
+        SmartDialog.showToast(e.message);
+      } else {
+        SmartDialog.showToast('自动填充版本号失败: $e');
+      }
+    }
+  }
+
+  /// 检查版本号是否已被使用
+  /// 如果已被使用，抛出异常提示用户重新生成
+  Future<void> _checkVersionExists(String version) async {
+    try {
+      SmartDialog.showLoading(msg: '正在检查版本号是否已被使用...');
+
+      // 请求所有数据，分页获取
+      List<dynamic> allDataList = [];
+      int pageNo = 1;
+      const pageSize = 20;
+      bool hasMore = true;
+
+      while (hasMore) {
+        final response = await global.post(
+          path:
+              '/api/platformservice/sceneResourceManager/querySceneSourceList',
+          data: {
+            'page': {
+              'pageSize': pageSize,
+              'pageNo': pageNo,
+            },
+          },
+        );
+
+        final success = JSON(response.data)['success'].boolValue;
+        final message = JSON(response.data)['message'].string ?? '未知错误';
+        if (!success) {
+          SmartDialog.dismiss();
+          throw ToastException('查询场景资源列表失败\n错误: $message');
+        }
+
+        final pageData = JSON(response.data)['data'];
+        final list = pageData['list'].listValue;
+        final total = pageData['total'].intValue;
+
+        // 将当前页数据添加到总列表
+        allDataList.addAll(list);
+
+        // 检查是否还有更多数据
+        if (allDataList.length >= total || list.isEmpty) {
+          hasMore = false;
+        } else {
+          pageNo++;
+        }
+      }
+
+      SmartDialog.dismiss();
+
+      // 提取当前版本号的纯版本号部分（用于比较）
+      final parsedVersion = _extractVersionNumber(version);
+
+      // 检查是否有相同平台和相同版本号的记录
+      final exists = allDataList.any((item) {
+        final jsonItem = JSON(item);
+        final client = jsonItem['client'].stringValue;
+        final itemVersion = jsonItem['version'].stringValue;
+
+        // 比较平台和版本号（提取版本号部分进行比较）
+        return client == curPlatform.value &&
+            _extractVersionNumber(itemVersion) == parsedVersion;
+      });
+
+      if (exists) {
+        throw ToastException('版本号 $version 已被使用，请点击"自动填充"按钮重新生成版本号');
+      }
+    } catch (e) {
+      SmartDialog.dismiss();
+      if (e is ToastException) {
+        rethrow;
+      } else {
+        // 如果查询失败，只记录日志但不阻止发布（避免因网络问题阻止正常发布）
+        print('检查版本号时出错: $e');
+        // 可以选择是否抛出异常，这里选择不抛出，允许继续发布
+        // throw ToastException('检查版本号失败，请稍后重试: $e');
+      }
+    }
+  }
+
+  /// 提取版本号（移除 v 前缀和 build 号）
+  /// 例如：v2.0.5 (0) -> 2.0.5，v2.0.50001 -> 2.0.50001
+  String _extractVersionNumber(String versionWithBuild) {
+    // 移除可能的 'v' 或 'V' 前缀（大小写不敏感）
+    String cleanVersion =
+        versionWithBuild.replaceFirst(RegExp(r'^[vV]'), '').trim();
+
+    // 移除 build 号部分（如果有）
+    cleanVersion = cleanVersion.replaceAll(RegExp(r'\s*\([^)]*\)'), '').trim();
+
+    return cleanVersion;
+  }
+
+  /// 生成初始版本号（基于最低版本号）
+  /// 例如：2.0.5 (0) -> 2.0.50000，v2.0.5 -> v2.0.50000
+  String _generateInitialVersion(String minVersion) {
+    // 检查是否有 v 前缀
+    final hasVPrefix = minVersion.startsWith('v') || minVersion.startsWith('V');
+
+    // 提取版本号（移除 v 前缀和 build 号）
+    String cleanVersion = _extractVersionNumber(minVersion);
+
+    // 分割版本号
+    final parts = cleanVersion.split('.');
+    if (parts.isEmpty) {
+      return minVersion;
+    }
+
+    // 将最后一部分补零到5位数，例如：5 -> 50000
+    // 确保最后一部分严格是5位数
+    final lastPart = int.tryParse(parts.last) ?? 0;
+    if (lastPart < 10000) {
+      // 小于10000的，乘以10000变成5位数
+      parts[parts.length - 1] = (lastPart * 10000).toString().padLeft(5, '0');
+    } else {
+      // 已经是5位数或更多，确保正好是5位数（如果超过5位，取后5位）
+      final lastPartStr = lastPart.toString();
+      if (lastPartStr.length > 5) {
+        // 如果超过5位，取后5位（处理异常情况）
+        parts[parts.length - 1] = lastPartStr.substring(lastPartStr.length - 5);
+      } else {
+        // 确保正好5位，不足5位前面补0
+        parts[parts.length - 1] = lastPartStr.padLeft(5, '0');
+      }
+    }
+
+    final initialVersion = parts.join('.');
+
+    // 如果原版本有 v 前缀，则保留
+    return hasVPrefix ? 'v$initialVersion' : initialVersion;
+  }
+
+  /// 版本号自动+1
+  /// 例如：v2.0.40000 -> v2.0.40001，2.0.40000 -> 2.0.40001
+  /// 确保最后一部分保持5位数
+  String _incrementVersion(String version) {
+    // 检查是否有 v 前缀
+    final hasVPrefix = version.startsWith('v') || version.startsWith('V');
+
+    // 提取版本号（移除 v 前缀）
+    String cleanVersion = version.replaceFirst(RegExp(r'^[vV]'), '').trim();
+
+    // 分割版本号
+    final parts = cleanVersion.split('.');
+    if (parts.isEmpty) {
+      return version;
+    }
+
+    // 将最后一部分+1，并确保保持5位数
+    final lastPart = int.tryParse(parts.last) ?? 0;
+    final incremented = lastPart + 1;
+
+    // 确保递增后的版本号保持5位数（如果超过99999，取模处理）
+    final incrementedStr = incremented.toString().padLeft(5, '0');
+    if (incrementedStr.length > 5) {
+      // 如果超过5位，取后5位（处理异常情况）
+      parts[parts.length - 1] =
+          incrementedStr.substring(incrementedStr.length - 5);
+    } else {
+      parts[parts.length - 1] = incrementedStr;
+    }
+
+    final incrementedVersion = parts.join('.');
+
+    // 如果原版本有 v 前缀，则保留
+    return hasVPrefix ? 'v$incrementedVersion' : incrementedVersion;
   }
 }
 
