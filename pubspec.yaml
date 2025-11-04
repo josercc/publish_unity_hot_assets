@@ -24,6 +24,7 @@ dependencies:
   quickalert: ^1.1.0
   shared_preferences: ^2.5.3
   flutter_archive: ^6.0.3
+  package_info_plus: ^8.1.1
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -3,6 +3,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
+import 'package:publish_unity_hot_assets/app/common/updater/update_helper.dart';
 
 import 'app/routes/app_pages.dart';
 
@@ -16,4 +17,7 @@ void main() {
       builder: FlutterSmartDialog.init(),
     ),
   );
+
+  // 应用启动后检查更新
+  UpdateHelper.checkUpdateOnStartup();
 }
