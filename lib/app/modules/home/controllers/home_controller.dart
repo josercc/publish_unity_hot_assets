@@ -81,6 +81,16 @@ class HomeController extends GetxController {
   /// 当前环境
   final curEnvironment = Environment.test.obs;
 
+  /// 取消所有任务
+  void cancelAllTasks() {
+    for (final task in taskList) {
+      task.cancel();
+    }
+    if (curTask.value != null) {
+      curTask.value!.cancel();
+    }
+  }
+
   @override
   void onInit() {
     super.onInit();
@@ -192,15 +202,15 @@ class HomeController extends GetxController {
   void selectUnityBranch(String branch) {
     curUnityBranch.value = branch;
     unityBranchController.text = branch;
-    // 更新资源包描述的默认值
-    _updateDefaultDescription();
+    // 切换分支时强制更新资源包描述的默认值
+    _updateDefaultDescription(forceUpdate: true);
   }
 
   /// 更新资源包描述的默认值（当前分支 + 当前时间点）
-  /// 只有在描述为空时才会设置默认值
-  void _updateDefaultDescription() {
-    // 如果用户已经手动填写了描述，则不覆盖
-    if (descController.text.isNotEmpty) {
+  /// [forceUpdate] 为 true 时，即使描述已有内容也会更新；为 false 时，只在描述为空时设置默认值
+  void _updateDefaultDescription({bool forceUpdate = false}) {
+    // 如果用户已经手动填写了描述，且不是强制更新，则不覆盖
+    if (!forceUpdate && descController.text.isNotEmpty) {
       return;
     }
 
@@ -958,6 +968,7 @@ class PackResourceTask extends Task<void> {
   final String buildConfiguration;
   final String branch;
   int? buildNumber; // 构建号，在构建完成后设置
+  String? waitingUid; // 等待获取构建号时的UID
 
   PackResourceTask({
     required this.platform,
@@ -987,34 +998,59 @@ class PackResourceTask extends Task<void> {
       throw 'jenkinsApi 不能为空';
     }
 
-    final lastBuildNumber = await jenkinsApi.getLastBuildNumber();
-    print('当前最新构建号: $lastBuildNumber');
-
     status.value = TaskStatus.fromCode(
       TaskStatusCode.processing,
       '正在启动Jenkins构建...',
     );
 
-    await jenkinsApi.startBuild(
+    // 启动构建并获取构建号
+    String? currentUid;
+    final newBuildNumber = await jenkinsApi.startBuild(
       platform: platform,
       buildConfiguration: buildConfiguration,
       branch: branch,
+      shouldCancel: () => isCancelled, // 检查任务是否已取消
+      onProgress: (message) {
+        // 从消息中提取UID（如果消息包含UID）
+        // 匹配格式：UID: xxx 或 (UID: xxx) 或 UID: xxx,
+        if (message.contains('UID')) {
+          // 尝试多种可能的格式
+          RegExpMatch? uidMatch = RegExp(r'UID:\s*(\d+)').firstMatch(message);
+          if (uidMatch == null) {
+            uidMatch = RegExp(r'\(UID:\s*(\d+)\)').firstMatch(message);
+          }
+          if (uidMatch == null) {
+            uidMatch = RegExp(r'UID\s*[=:]\s*(\d+)').firstMatch(message);
+          }
+          if (uidMatch != null) {
+            final extractedUid = uidMatch.group(1);
+            if (extractedUid != null) {
+              currentUid = extractedUid;
+              waitingUid = currentUid;
+            }
+          }
+        }
+        // 更新任务状态，显示等待获取构建号的进度
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.processing,
+          message,
+        );
+      },
     );
 
-    final newBuildNumber = lastBuildNumber + 1;
+    // 获取到构建号后，清除等待的UID
+    waitingUid = null;
+
     buildNumber = newBuildNumber; // 保存构建号
-    print('新构建号: $newBuildNumber');
+    print('获取到构建号: $buildNumber');
 
     status.value = TaskStatus.fromCode(
       TaskStatusCode.processing,
-      '构建已启动（构建号: $newBuildNumber），正在等待Jenkins开始执行...',
+      '构建已启动（构建号: $buildNumber），开始监控构建进度...',
     );
 
-    // 等待Jenkins开始执行新构建
-    await waitForBuildToStart(newBuildNumber);
-
     // 开始监控构建结果
-    final result = await queryBuildResult(newBuildNumber);
+    final result = await queryBuildResult(buildNumber!);
     if (result) {
       status.value = TaskStatus.fromCode(
         TaskStatusCode.success,
@@ -1025,7 +1061,7 @@ class PackResourceTask extends Task<void> {
         TaskStatusCode.error,
         '打包失败',
       );
-      throw Exception('Jenkins构建失败，构建号: $newBuildNumber');
+      throw Exception('Jenkins构建失败，构建号: $buildNumber');
     }
   }
 
@@ -1113,14 +1149,26 @@ class PackResourceTask extends Task<void> {
           buildNumber: buildNumber,
         );
 
+        // Jenkins构建结果状态：
+        // null - 构建还在进行中
+        // SUCCESS - 构建成功
+        // FAILURE - 构建失败
+        // ABORTED - 构建已中止
+        // UNSTABLE - 构建不稳定（有测试失败但构建成功）
+        // 任何非null的状态都表示构建已结束，应该停止查询
         if (result == 'SUCCESS') {
           timer?.cancel();
           completer.complete(true);
-        } else if (result == 'FAILURE') {
+        } else if (result != null) {
+          // 构建已结束，但结果不是SUCCESS（可能是FAILURE、ABORTED、UNSTABLE等）
           timer?.cancel();
+          status.value = TaskStatus.fromCode(
+            TaskStatusCode.error,
+            'Jenkins构建已结束，结果: $result',
+          );
           completer.complete(false);
         }
-        // 如果result为null或其他值，继续等待
+        // 如果result为null，表示构建还在进行中，继续等待
       } catch (e) {
         timer?.cancel();
         status.value = TaskStatus.fromCode(

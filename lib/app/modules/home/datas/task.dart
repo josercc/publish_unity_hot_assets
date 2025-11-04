@@ -11,10 +11,21 @@ abstract class Task<T> {
   /// 任务状态
   final status = TaskStatus.fromCode(TaskStatusCode.waiting, '等待中......').obs;
 
+  /// 是否已取消
+  bool _isCancelled = false;
+
   Task({required this.name});
 
   /// 执行任务
   Future<T> execute();
+
+  /// 取消任务
+  void cancel() {
+    _isCancelled = true;
+  }
+
+  /// 检查任务是否已取消
+  bool get isCancelled => _isCancelled;
 }
 
 enum TaskStatusCode {

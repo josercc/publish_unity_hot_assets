@@ -20,6 +20,8 @@ class HomeView extends GetView<HomeController> {
         actions: [
           TextButton(
             onPressed: () {
+              // 取消所有正在执行的任务
+              controller.cancelAllTasks();
               Get.offAllNamed(Routes.LOGIN);
             },
             child: const Text('退出'),
@@ -337,6 +339,20 @@ class HomeView extends GetView<HomeController> {
                   ),
                   ...taskList.map(
                     (e) {
+                      // 如果是打包任务，显示构建号或UID信息
+                      String subtitleText = e.status.value.title;
+                      // PackResourceTask 定义在 home_controller.dart 中，通过导入可以访问
+                      if (e is PackResourceTask) {
+                        final packTask = e;
+                        if (packTask.buildNumber != null) {
+                          subtitleText =
+                              '${e.status.value.title}\n构建号: ${packTask.buildNumber}';
+                        } else if (packTask.waitingUid != null) {
+                          subtitleText =
+                              '${e.status.value.title}\n等待ID (UID: ${packTask.waitingUid})';
+                        }
+                      }
+
                       return ListTile(
                         title: Row(
                           children: [
@@ -350,7 +366,7 @@ class HomeView extends GetView<HomeController> {
                             Text(e.name),
                           ],
                         ),
-                        subtitle: Text(e.status.value.title),
+                        subtitle: Text(subtitleText),
                       );
                     },
                   )
@@ -399,6 +415,8 @@ class HomeView extends GetView<HomeController> {
           _publishHotVersion();
         },
         onCancelBtnTap: () {
+          // 取消当前任务
+          controller.curTask.value?.cancel();
           Get.back();
         },
       ).then((e) {

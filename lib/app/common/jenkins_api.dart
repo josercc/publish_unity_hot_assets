@@ -118,23 +118,84 @@ class JenkinsApi {
     }
   }
 
+  /// 获取最后一个构建的详细信息（包括参数）
+  Future<Map<String, dynamic>?> getLastBuildInfo() async {
+    try {
+      final url =
+          '$jenkinsUrl/job/build_unity_hot_asset/lastBuild/api/json?pretty=true';
+      final res = await global.dio.get(
+        url,
+        options: Options(
+          headers: {
+            'Authorization': getAuthHeader(),
+          },
+        ),
+      );
+      return res.data as Map<String, dynamic>?;
+    } catch (e) {
+      print('Jenkins获取最后一个构建信息失败: $e');
+      return null;
+    }
+  }
+
+  /// 从构建信息中提取 UID 参数
+  String? extractUidFromBuildInfo(Map<String, dynamic>? buildInfo) {
+    if (buildInfo == null) return null;
+
+    try {
+      final actions = buildInfo['actions'] as List?;
+      if (actions == null) return null;
+
+      for (final action in actions) {
+        if (action is Map<String, dynamic>) {
+          final parameters = action['parameters'] as List?;
+          if (parameters != null) {
+            for (final param in parameters) {
+              if (param is Map<String, dynamic>) {
+                final name = param['name'] as String?;
+                if (name == 'UID') {
+                  return param['value'] as String?;
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('提取UID参数失败: $e');
+    }
+
+    return null;
+  }
+
   /// 开启打包
-  Future<bool> startBuild({
+  /// 返回构建号，如果查询不到则抛出异常
+  /// [onProgress] 可选的进度回调，用于更新状态信息
+  /// [shouldCancel] 可选的取消检查函数，返回 true 时终止循环
+  Future<int> startBuild({
     required String platform,
     required String buildConfiguration,
     required String branch,
+    void Function(String message)? onProgress,
+    bool Function()? shouldCancel,
   }) async {
+    // 生成当前时间戳作为 UID
+    final uid = DateTime.now().millisecondsSinceEpoch.toString();
+    print('Jenkins开启打包 - 生成UID: $uid');
+
     final url = '$jenkinsUrl/job/build_unity_hot_asset/buildWithParameters';
     final queryParams = {
       'platform': platform.toLowerCase(),
       'build_type': buildConfiguration,
       'branch': branch,
+      'UID': uid, // 添加 UID 参数
     };
 
     print('Jenkins开启打包 - 请求路径: $url');
     print('Jenkins开启打包 - 平台: $platform');
     print('Jenkins开启打包 - 构建配置: $buildConfiguration');
     print('Jenkins开启打包 - 分支: $branch');
+    print('Jenkins开启打包 - UID: $uid');
     print('Jenkins开启打包 - 查询参数: $queryParams');
 
     final res = await global.dio
@@ -152,11 +213,12 @@ class JenkinsApi {
       print('Jenkins开启打包失败 - 平台: $platform');
       print('Jenkins开启打包失败 - 构建配置: $buildConfiguration');
       print('Jenkins开启打包失败 - 分支: $branch');
+      print('Jenkins开启打包失败 - UID: $uid');
       print('Jenkins开启打包失败 - 查询参数: $queryParams');
       print('Jenkins开启打包失败 - 错误信息: $e');
       if (e is DioException) {
         final errorMessage =
-            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\n查询参数: $queryParams\nHTTP状态码: ${e.response?.statusCode}\n错误: ${e.message ?? e.toString()}';
+            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\nUID: $uid\n查询参数: $queryParams\nHTTP状态码: ${e.response?.statusCode}\n错误: ${e.message ?? e.toString()}';
         throw DioException(
           requestOptions: e.requestOptions,
           response: e.response,
@@ -165,14 +227,146 @@ class JenkinsApi {
         );
       } else {
         throw Exception(
-            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\n查询参数: $queryParams\n错误: $e');
+            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\nUID: $uid\n查询参数: $queryParams\n错误: $e');
       }
     });
 
     final success = res.statusCode == 201;
     print('Jenkins开启打包结果 - HTTP状态码: ${res.statusCode}');
+    print('Jenkins开启打包结果 - 响应数据: ${res.data}');
+    print('Jenkins开启打包结果 - 响应头: ${res.headers}');
     print('Jenkins开启打包结果 - 成功: $success');
-    return success;
+
+    if (!success) {
+      throw Exception(
+          'Jenkins开启打包失败\nHTTP状态码: ${res.statusCode}\n响应数据: ${res.data}');
+    }
+
+    final progressMessage = '构建请求已发送，开始等待获取构建号（UID: $uid）...';
+    print('Jenkins开启打包 - $progressMessage');
+    onProgress?.call(progressMessage);
+
+    // 轮询查询最后一个构建的 UID，直到匹配（无限循环等待）
+    int? buildNumber;
+    int queryCount = 0;
+    DateTime startTime = DateTime.now();
+    const retryDelay = Duration(seconds: 3);
+
+    while (buildNumber == null) {
+      // 检查是否应该取消
+      if (shouldCancel != null && shouldCancel()) {
+        final cancelMessage = '已取消等待获取构建号（UID: $uid）';
+        print('Jenkins开启打包 - $cancelMessage');
+        onProgress?.call(cancelMessage);
+        throw Exception('等待获取构建号已取消');
+      }
+
+      try {
+        queryCount++;
+        final elapsedSeconds = DateTime.now().difference(startTime).inSeconds;
+        final elapsedMinutes = (elapsedSeconds / 60).toStringAsFixed(1);
+
+        String waitMessage;
+        if (elapsedSeconds < 60) {
+          waitMessage =
+              '等待获取构建号中... (第${queryCount}次查询，已等待${elapsedSeconds}秒，UID: $uid)';
+        } else {
+          waitMessage =
+              '等待获取构建号中... (第${queryCount}次查询，已等待${elapsedMinutes}分钟，UID: $uid)';
+        }
+        print('Jenkins开启打包 - $waitMessage');
+        onProgress?.call(waitMessage);
+
+        final buildInfo = await getLastBuildInfo();
+        if (buildInfo == null) {
+          final noInfoMessage =
+              '尚未获取到最后一个构建信息，等待${retryDelay.inSeconds}秒后继续查询...';
+          print('Jenkins开启打包 - $noInfoMessage');
+          onProgress?.call(noInfoMessage);
+          await Future.delayed(retryDelay);
+          // 等待后检查是否应该取消
+          if (shouldCancel != null && shouldCancel()) {
+            final cancelMessage = '已取消等待获取构建号（UID: $uid）';
+            print('Jenkins开启打包 - $cancelMessage');
+            onProgress?.call(cancelMessage);
+            throw Exception('等待获取构建号已取消');
+          }
+          continue;
+        }
+
+        final lastBuildNumber = buildInfo['number'] as int?;
+        if (lastBuildNumber == null) {
+          final noNumberMessage =
+              '最后一个构建没有构建号，等待${retryDelay.inSeconds}秒后继续查询...';
+          print('Jenkins开启打包 - $noNumberMessage');
+          onProgress?.call(noNumberMessage);
+          await Future.delayed(retryDelay);
+          // 等待后检查是否应该取消
+          if (shouldCancel != null && shouldCancel()) {
+            final cancelMessage = '已取消等待获取构建号（UID: $uid）';
+            print('Jenkins开启打包 - $cancelMessage');
+            onProgress?.call(cancelMessage);
+            throw Exception('等待获取构建号已取消');
+          }
+          continue;
+        }
+
+        final lastBuildUid = extractUidFromBuildInfo(buildInfo);
+        final queryMessage =
+            '查询到最后一个构建号: $lastBuildNumber, UID: $lastBuildUid, 期望UID: $uid';
+        print('Jenkins开启打包 - $queryMessage');
+        onProgress?.call(queryMessage);
+
+        if (lastBuildUid == uid) {
+          // UID 匹配成功，立即设置构建号并退出循环
+          buildNumber = lastBuildNumber;
+          final successMessage = '✅ UID匹配成功！获取到构建号: $buildNumber';
+          print('Jenkins开启打包 - $successMessage');
+          onProgress?.call(successMessage);
+          // 立即退出循环，不再继续等待
+          break;
+        } else {
+          // UID 不匹配，继续等待
+          final mismatchMessage =
+              '⏳ UID不匹配（当前: $lastBuildUid, 期望: $uid），继续等待...等待${retryDelay.inSeconds}秒后继续查询...';
+          print('Jenkins开启打包 - $mismatchMessage');
+          onProgress?.call(mismatchMessage);
+          await Future.delayed(retryDelay);
+          // 等待后检查是否应该取消
+          if (shouldCancel != null && shouldCancel()) {
+            final cancelMessage = '已取消等待获取构建号（UID: $uid）';
+            print('Jenkins开启打包 - $cancelMessage');
+            onProgress?.call(cancelMessage);
+            throw Exception('等待获取构建号已取消');
+          }
+          // 继续下一次循环
+          continue;
+        }
+      } catch (e) {
+        // 如果是取消异常，直接抛出不再继续
+        if (e.toString().contains('等待获取构建号已取消')) {
+          rethrow;
+        }
+        final errorMessage = '查询构建信息失败: $e，等待${retryDelay.inSeconds}秒后继续查询...';
+        print('Jenkins开启打包 - $errorMessage');
+        onProgress?.call(errorMessage);
+        // 即使查询失败也继续等待，不抛出异常
+        await Future.delayed(retryDelay);
+        // 等待后检查是否应该取消
+        if (shouldCancel != null && shouldCancel()) {
+          final cancelMessage = '已取消等待获取构建号（UID: $uid）';
+          print('Jenkins开启打包 - $cancelMessage');
+          onProgress?.call(cancelMessage);
+          throw Exception('等待获取构建号已取消');
+        }
+        // 继续下一次循环
+        continue;
+      }
+    }
+
+    // 循环退出时，buildNumber 一定已经被设置（因为循环条件是 buildNumber == null）
+    // 当 UID 匹配成功时，会执行 buildNumber = lastBuildNumber; break; 退出循环
+    return buildNumber;
   }
 
   /// 获取最后一个构建号
