@@ -525,6 +525,8 @@ class AppUpdaterService {
 
     // 查找 .exe 文件（主程序）
     File? exeFile;
+    
+    // 首先在顶层查找
     for (final entity in topLevelEntities) {
       if (entity is File && entity.path.endsWith('.exe')) {
         final fileName = path.basename(entity.path);
@@ -539,7 +541,7 @@ class AppUpdaterService {
     }
 
     if (exeFile == null) {
-      // 如果没找到，尝试查找任何 .exe 文件
+      // 如果没找到，尝试查找任何 .exe 文件（顶层）
       for (final entity in topLevelEntities) {
         if (entity is File && entity.path.endsWith('.exe')) {
           exeFile = entity;
@@ -549,9 +551,59 @@ class AppUpdaterService {
       }
     }
 
+    // 如果顶层没找到，递归查找子目录
     if (exeFile == null) {
+      print('顶层未找到，递归查找子目录...');
+      File? foundExe; // 用于存储找到的第一个 .exe 文件（如果不是主程序）
+      await for (final entity in extractDir.list(recursive: true)) {
+        if (entity is File && entity.path.endsWith('.exe')) {
+          final fileName = path.basename(entity.path);
+          // 优先查找主程序
+          if (fileName.contains('publish_unity_hot_assets') ||
+              !fileName.contains('flutter_')) {
+            exeFile = entity;
+            print('✅ 在子目录中找到主程序: ${exeFile.path}');
+            break;
+          } else if (foundExe == null) {
+            // 保存找到的第一个 .exe 文件（作为备选）
+            foundExe = entity;
+          }
+        }
+      }
+      // 如果没找到主程序，但找到了其他 .exe 文件，使用它
+      if (exeFile == null && foundExe != null) {
+        exeFile = foundExe;
+        print('✅ 在子目录中找到可执行文件: ${exeFile.path}');
+      }
+    }
+
+    if (exeFile == null) {
+      print('错误: 在 ZIP 中未找到 .exe 文件');
+      print('解压目录内容（顶层）:');
+      for (final entity in topLevelEntities) {
+        final entityType = entity is Directory ? '目录' : '文件';
+        print('  - ${entity.path} ($entityType)');
+      }
+      print('解压目录内容（递归）:');
+      await for (final entity in extractDir.list(recursive: true)) {
+        final entityType = entity is Directory ? '目录' : '文件';
+        print('  - ${entity.path} ($entityType)');
+      }
       throw Exception('在 ZIP 中未找到 .exe 文件');
     }
+
+    // 验证 .exe 文件是否存在
+    if (!await exeFile.exists()) {
+      throw Exception('找到的 .exe 文件不存在: ${exeFile.path}');
+    }
+
+    // 打印找到的文件详细信息
+    print('✅ 找到 .exe 文件:');
+    print('  完整路径: ${exeFile.path}');
+    print('  文件名: ${path.basename(exeFile.path)}');
+    print('  文件扩展名: ${path.extension(exeFile.path)}');
+    print('  文件是否存在: ${await exeFile.exists()}');
+    print('  文件大小: ${await exeFile.length()} 字节');
 
     // 获取应用安装目录（通常是用户目录下的 AppData/Local）
     final appDataDir = Platform.environment['LOCALAPPDATA'] ??

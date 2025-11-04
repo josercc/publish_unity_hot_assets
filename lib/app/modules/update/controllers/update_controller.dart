@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/updater/app_updater_service.dart';
+import 'package:publish_unity_hot_assets/app/common/log_exporter.dart';
 
 class UpdateController extends GetxController {
   final AppUpdaterService _updaterService = AppUpdaterService();
@@ -213,6 +214,76 @@ class UpdateController extends GetxController {
             ),
           ),
           actions: [
+            // 导出日志按钮
+            TextButton.icon(
+              onPressed: () async {
+                try {
+                  // 显示导出中提示
+                  SmartDialog.showLoading(msg: '正在导出日志...');
+
+                  // 收集额外信息
+                  final additionalInfo = <String, dynamic>{
+                    '更新文件路径': info.downloadUrl,
+                    '更新版本': info.version,
+                    '文件大小':
+                        '${(info.fileSize / 1024 / 1024).toStringAsFixed(2)} MB',
+                  };
+
+                  // 导出日志
+                  final logPath = await LogExporter.exportUpdateErrorLog(
+                    error: e,
+                    stackTrace: stackTrace,
+                    additionalInfo: additionalInfo,
+                  );
+
+                  SmartDialog.dismiss();
+
+                  // 显示成功提示
+                  Get.dialog(
+                    AlertDialog(
+                      title: const Text('日志导出成功'),
+                      content: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('日志文件已保存到：'),
+                          const SizedBox(height: 8),
+                          SelectableText(
+                            logPath,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            '请将此文件发送给开发者以便排查问题。',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () async {
+                            Get.back();
+                            // 尝试打开文件所在目录
+                            await LogExporter.openFileLocation(logPath);
+                          },
+                          child: const Text('打开文件位置'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Get.back(),
+                          child: const Text('确定'),
+                        ),
+                      ],
+                    ),
+                  );
+                } catch (exportError) {
+                  SmartDialog.dismiss();
+                  SmartDialog.showToast('导出日志失败: $exportError');
+                }
+              },
+              icon: const Icon(Icons.download, size: 18),
+              label: const Text('导出日志'),
+            ),
+            // 确定按钮
             ElevatedButton(
               onPressed: () => Get.back(),
               child: const Text('确定'),
