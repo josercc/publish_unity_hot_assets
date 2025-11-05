@@ -151,7 +151,8 @@ $gmallKey
     if (token == null) {
       throw 'Gmall 账户登录失败\nURL: ${global.gmallUrl}/login/portalLogin';
     }
-    global.token = token;
+    // 使用setToken方法设置token和过期时间
+    global.setToken(token);
   }
 
   /// 初始化本地登录信息

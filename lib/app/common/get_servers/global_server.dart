@@ -9,6 +9,7 @@ GlobalServer get global => Get.find();
 class GlobalServer extends GetxService {
   final dio = Dio();
   String? token;
+  DateTime? tokenExpireTime; // Token过期时间
   String? gmallUrl;
   Environment? currentEnvironment;
 
@@ -74,5 +75,45 @@ class GlobalServer extends GetxService {
   String _gmallUrl(String path) {
     // return 'http://frontmanager-sit.winnerapp.cn:8000$path';
     return '$gmallUrl$path';
+  }
+
+  /// 设置token和过期时间（5小时后过期）
+  void setToken(String tokenValue) {
+    token = tokenValue;
+    // Token有效期为5小时
+    tokenExpireTime = DateTime.now().add(const Duration(hours: 5));
+  }
+
+  /// 检查token是否有效
+  /// 返回true表示token有效，false表示token无效或不存在
+  bool isTokenValid() {
+    // 如果token不存在，返回false
+    if (token == null || token!.isEmpty) {
+      return false;
+    }
+
+    // 如果过期时间不存在，返回false
+    if (tokenExpireTime == null) {
+      return false;
+    }
+
+    // 检查是否已过期
+    return DateTime.now().isBefore(tokenExpireTime!);
+  }
+
+  /// 获取token剩余有效时间（小时）
+  /// 返回null表示token不存在或已过期
+  double? getTokenRemainingHours() {
+    if (token == null || token!.isEmpty || tokenExpireTime == null) {
+      return null;
+    }
+
+    final now = DateTime.now();
+    if (now.isAfter(tokenExpireTime!)) {
+      return null; // 已过期
+    }
+
+    final remaining = tokenExpireTime!.difference(now);
+    return remaining.inMinutes / 60.0; // 转换为小时
   }
 }

@@ -14,6 +14,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/modules/home/datas/task.dart';
+import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 import 'package:xml2json/xml2json.dart';
 import 'package:crypto/crypto.dart' as crypto;
 
@@ -81,6 +82,9 @@ class HomeController extends GetxController {
   /// 当前环境
   final curEnvironment = Environment.test.obs;
 
+  /// Token检测定时任务
+  Timer? _tokenCheckTimer;
+
   /// 取消所有任务
   void cancelAllTasks() {
     for (final task in taskList) {
@@ -97,6 +101,8 @@ class HomeController extends GetxController {
     setDate(DateTime.now());
     setTime(TimeOfDay.now());
     _initializeData();
+    // 启动token检测定时任务
+    _startTokenCheckTimer();
   }
 
   /// 初始化数据，带错误处理
@@ -128,6 +134,9 @@ class HomeController extends GetxController {
 
   @override
   void onClose() {
+    // 取消token检测定时任务
+    _tokenCheckTimer?.cancel();
+    _tokenCheckTimer = null;
     // 释放所有TextEditingController资源
     descController.dispose();
     dateController.dispose();
@@ -138,6 +147,47 @@ class HomeController extends GetxController {
     unityBranchController.dispose();
     localResourcePathController.dispose();
     super.onClose();
+  }
+
+  /// 启动token检测定时任务
+  void _startTokenCheckTimer() {
+    // 每分钟检测一次token有效期
+    _tokenCheckTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      _checkTokenValidity();
+    });
+  }
+
+  /// 检查token有效性
+  void _checkTokenValidity() {
+    // 如果本地没有token，自动退出到登录页面
+    if (global.token == null || global.token!.isEmpty) {
+      print('Token不存在，自动退出到登录页面');
+      _logoutToLogin();
+      return;
+    }
+
+    // 获取token剩余有效时间（小时）
+    final remainingHours = global.getTokenRemainingHours();
+
+    // 如果token已过期或剩余有效期小于1小时，自动退出到登录页面
+    if (remainingHours == null || remainingHours < 1.0) {
+      print('Token已过期或剩余有效期小于1小时（剩余: $remainingHours 小时），自动退出到登录页面');
+      _logoutToLogin();
+      return;
+    }
+
+    print('Token检查通过，剩余有效期: ${remainingHours.toStringAsFixed(2)} 小时');
+  }
+
+  /// 退出到登录页面
+  void _logoutToLogin() {
+    // 取消定时任务
+    _tokenCheckTimer?.cancel();
+    _tokenCheckTimer = null;
+    // 取消所有任务
+    cancelAllTasks();
+    // 跳转到登录页面
+    Get.offAllNamed(Routes.LOGIN);
   }
 
   /// 加载当前环境
