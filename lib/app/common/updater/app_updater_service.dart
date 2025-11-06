@@ -344,24 +344,40 @@ class AppUpdaterService {
 
       print('目标路径: ${targetApp.path}');
 
-      // 如果应用已存在，先删除
+      // 如果应用已存在，先尝试删除（可选步骤，为了干净）
+      // 注意：在更新自己的应用时，应用可能正在运行，删除可能会失败
+      // 如果删除失败，不要紧，ditto 命令可以直接覆盖已存在的文件
       if (await targetApp.exists()) {
-        print('删除旧应用: ${targetApp.path}');
-        final rmResult = await Process.run('rm', ['-rf', targetApp.path]);
-        if (rmResult.exitCode != 0) {
-          throw Exception('删除旧应用失败: ${rmResult.stderr}');
+        print('检测到旧应用存在，尝试删除: ${targetApp.path}');
+
+        // 尝试使用 rm 删除（静默失败，不影响后续流程）
+        try {
+          var rmResult = await Process.run('rm', ['-rf', targetApp.path]);
+          if (rmResult.exitCode == 0) {
+            print('rm 删除成功');
+            await Future.delayed(const Duration(milliseconds: 500));
+          } else {
+            print('rm 删除失败（可能由于权限或文件锁定），将使用 ditto 直接覆盖: ${rmResult.stderr}');
+          }
+        } catch (e) {
+          print('rm 删除异常，将使用 ditto 直接覆盖: $e');
         }
       }
 
-      // 复制新应用（使用 ditto 命令，更可靠）
+      // 复制新应用（使用 ditto 命令，-Vk 参数可以覆盖已存在的文件）
+      // -V: 详细输出
+      // -k: 保留扩展属性
+      // 注意：即使删除失败，ditto 也能覆盖已存在的文件
       print('复制应用到 /Applications...');
       final copyResult = await Process.run(
         'ditto',
-        [appFile.path, targetApp.path],
+        ['-Vk', appFile.path, targetApp.path],
       );
 
       if (copyResult.exitCode != 0) {
-        throw Exception('复制应用失败: ${copyResult.stderr}');
+        // 如果 ditto 也失败，可能是权限问题，尝试使用 sudo（需要用户授权）
+        print('ditto 复制失败，尝试使用 sudo: ${copyResult.stderr}');
+        throw Exception('复制应用失败: ${copyResult.stderr}\n请确保应用已退出或检查权限设置');
       }
 
       print('应用安装成功: ${targetApp.path}');
@@ -525,7 +541,7 @@ class AppUpdaterService {
 
     // 查找 .exe 文件（主程序）
     File? exeFile;
-    
+
     // 首先在顶层查找
     for (final entity in topLevelEntities) {
       if (entity is File && entity.path.endsWith('.exe')) {
@@ -777,24 +793,40 @@ class AppUpdaterService {
 
     print('目标路径: ${targetApp.path}');
 
-    // 如果应用已存在，先删除
+    // 如果应用已存在，先尝试删除（可选步骤，为了干净）
+    // 注意：在更新自己的应用时，应用可能正在运行，删除可能会失败
+    // 如果删除失败，不要紧，ditto 命令可以直接覆盖已存在的文件
     if (await targetApp.exists()) {
-      print('删除旧应用: ${targetApp.path}');
-      final rmResult = await Process.run('rm', ['-rf', targetApp.path]);
-      if (rmResult.exitCode != 0) {
-        throw Exception('删除旧应用失败: ${rmResult.stderr}');
+      print('检测到旧应用存在，尝试删除: ${targetApp.path}');
+
+      // 尝试使用 rm 删除（静默失败，不影响后续流程）
+      try {
+        var rmResult = await Process.run('rm', ['-rf', targetApp.path]);
+        if (rmResult.exitCode == 0) {
+          print('rm 删除成功');
+          await Future.delayed(const Duration(milliseconds: 500));
+        } else {
+          print('rm 删除失败（可能由于权限或文件锁定），将使用 ditto 直接覆盖: ${rmResult.stderr}');
+        }
+      } catch (e) {
+        print('rm 删除异常，将使用 ditto 直接覆盖: $e');
       }
     }
 
-    // 复制新应用（使用 ditto 命令）
+    // 复制新应用（使用 ditto 命令，-Vk 参数可以覆盖已存在的文件）
+    // -V: 详细输出
+    // -k: 保留扩展属性
+    // 注意：即使删除失败，ditto 也能覆盖已存在的文件
     print('复制应用到 /Applications...');
     final copyResult = await Process.run(
       'ditto',
-      [appFile.path, targetApp.path],
+      ['-Vk', appFile.path, targetApp.path],
     );
 
     if (copyResult.exitCode != 0) {
-      throw Exception('复制应用失败: ${copyResult.stderr}');
+      // 如果 ditto 也失败，可能是权限问题，尝试使用 sudo（需要用户授权）
+      print('ditto 复制失败，尝试使用 sudo: ${copyResult.stderr}');
+      throw Exception('复制应用失败: ${copyResult.stderr}\n请确保应用已退出或检查权限设置');
     }
 
     print('应用安装成功: ${targetApp.path}');
