@@ -337,51 +337,20 @@ class AppUpdaterService {
         throw Exception('在 DMG 中未找到 .app 文件');
       }
 
-      // 复制应用到 Applications 目录
+      // 复制应用到目标目录（优先 /Applications，失败则退回 ~/Applications）
       final applicationsDir = Directory('/Applications');
       final appName = path.basename(appFile.path);
-      final targetApp = Directory(path.join(applicationsDir.path, appName));
+      final homeDir = Platform.environment['HOME'];
+      final fallbackDir = homeDir != null
+          ? Directory(path.join(homeDir, 'Applications', appName))
+          : null;
 
-      print('目标路径: ${targetApp.path}');
+      final installedPath =
+          await _copyAppBundle(appFile, Directory(path.join(applicationsDir.path, appName)),
+              fallbackDir: fallbackDir);
 
-      // 如果应用已存在，先尝试删除（可选步骤，为了干净）
-      // 注意：在更新自己的应用时，应用可能正在运行，删除可能会失败
-      // 如果删除失败，不要紧，ditto 命令可以直接覆盖已存在的文件
-      if (await targetApp.exists()) {
-        print('检测到旧应用存在，尝试删除: ${targetApp.path}');
-
-        // 尝试使用 rm 删除（静默失败，不影响后续流程）
-        try {
-          var rmResult = await Process.run('rm', ['-rf', targetApp.path]);
-          if (rmResult.exitCode == 0) {
-            print('rm 删除成功');
-            await Future.delayed(const Duration(milliseconds: 500));
-          } else {
-            print('rm 删除失败（可能由于权限或文件锁定），将使用 ditto 直接覆盖: ${rmResult.stderr}');
-          }
-        } catch (e) {
-          print('rm 删除异常，将使用 ditto 直接覆盖: $e');
-        }
-      }
-
-      // 复制新应用（使用 ditto 命令，-Vk 参数可以覆盖已存在的文件）
-      // -V: 详细输出
-      // -k: 保留扩展属性
-      // 注意：即使删除失败，ditto 也能覆盖已存在的文件
-      print('复制应用到 /Applications...');
-      final copyResult = await Process.run(
-        'ditto',
-        ['-Vk', appFile.path, targetApp.path],
-      );
-
-      if (copyResult.exitCode != 0) {
-        // 如果 ditto 也失败，可能是权限问题，尝试使用 sudo（需要用户授权）
-        print('ditto 复制失败，尝试使用 sudo: ${copyResult.stderr}');
-        throw Exception('复制应用失败: ${copyResult.stderr}\n请确保应用已退出或检查权限设置');
-      }
-
-      print('应用安装成功: ${targetApp.path}');
-      return targetApp.path;
+      print('应用安装成功: $installedPath');
+      return installedPath;
     } finally {
       // 卸载 DMG
       print('卸载 DMG: $mountPoint');
@@ -539,19 +508,26 @@ class AppUpdaterService {
       Directory extractDir, List<FileSystemEntity> topLevelEntities) async {
     print('查找 Windows 应用文件...');
 
-    // 查找 .exe 文件（主程序）
+    // 查找 .exe/.msi 文件（主程序或安装包）
     File? exeFile;
+    File? msiFile;
 
     // 首先在顶层查找
     for (final entity in topLevelEntities) {
-      if (entity is File && entity.path.endsWith('.exe')) {
-        final fileName = path.basename(entity.path);
-        // 查找主程序（通常是应用名称.exe）
-        if (fileName.contains('publish_unity_hot_assets') ||
-            !fileName.contains('flutter_')) {
-          exeFile = entity;
-          print('找到主程序: ${exeFile.path}');
-          break;
+      if (entity is File) {
+        final ext = path.extension(entity.path).toLowerCase();
+        if (ext == '.exe') {
+          final fileName = path.basename(entity.path).toLowerCase();
+          // 查找主程序（通常是应用名称.exe）
+          if (fileName.contains('publish_unity_hot_assets') ||
+              !fileName.contains('flutter_')) {
+            exeFile = entity;
+            print('找到主程序: ${exeFile.path}');
+            break;
+          }
+        } else if (ext == '.msi') {
+          msiFile = entity;
+          print('找到 MSI 安装包: ${msiFile.path}');
         }
       }
     }
@@ -559,10 +535,17 @@ class AppUpdaterService {
     if (exeFile == null) {
       // 如果没找到，尝试查找任何 .exe 文件（顶层）
       for (final entity in topLevelEntities) {
-        if (entity is File && entity.path.endsWith('.exe')) {
-          exeFile = entity;
-          print('找到可执行文件: ${exeFile.path}');
-          break;
+        if (entity is File) {
+          final ext = path.extension(entity.path).toLowerCase();
+          if (ext == '.exe') {
+            exeFile = entity;
+            print('找到可执行文件: ${exeFile.path}');
+            break;
+          }
+          if (ext == '.msi' && msiFile == null) {
+            msiFile = entity;
+            print('找到 MSI 安装包: ${msiFile.path}');
+          }
         }
       }
     }
@@ -571,18 +554,34 @@ class AppUpdaterService {
     if (exeFile == null) {
       print('顶层未找到，递归查找子目录...');
       File? foundExe; // 用于存储找到的第一个 .exe 文件（如果不是主程序）
+      File? foundMsi;
       await for (final entity in extractDir.list(recursive: true)) {
-        if (entity is File && entity.path.endsWith('.exe')) {
-          final fileName = path.basename(entity.path);
-          // 优先查找主程序
-          if (fileName.contains('publish_unity_hot_assets') ||
-              !fileName.contains('flutter_')) {
-            exeFile = entity;
-            print('✅ 在子目录中找到主程序: ${exeFile.path}');
-            break;
-          } else if (foundExe == null) {
-            // 保存找到的第一个 .exe 文件（作为备选）
-            foundExe = entity;
+        if (entity is File) {
+          final ext = path.extension(entity.path).toLowerCase();
+          if (ext == '.exe') {
+            final fileName = path.basename(entity.path).toLowerCase();
+            // 优先查找主程序
+            if (fileName.contains('publish_unity_hot_assets') ||
+                !fileName.contains('flutter_')) {
+              exeFile = entity;
+              print('✅ 在子目录中找到主程序: ${exeFile.path}');
+              break;
+            } else if (foundExe == null) {
+              // 保存找到的第一个 .exe 文件（作为备选）
+              foundExe = entity;
+            }
+          } else if (ext == '.msi') {
+            // 记录第一个 MSI 安装包
+            if (msiFile == null) {
+              foundMsi = entity;
+            }
+            // 优先使用包含应用名的 MSI
+            final fileName = path.basename(entity.path).toLowerCase();
+            if (fileName.contains('publish_unity_hot_assets')) {
+              msiFile = entity;
+              print('✅ 在子目录中找到 MSI 安装包: ${msiFile.path}');
+              break;
+            }
           }
         }
       }
@@ -591,10 +590,30 @@ class AppUpdaterService {
         exeFile = foundExe;
         print('✅ 在子目录中找到可执行文件: ${exeFile.path}');
       }
+      // 如果没有 .exe，但找到了 MSI，使用 MSI
+      if (exeFile == null && msiFile == null && foundMsi != null) {
+        msiFile = foundMsi;
+        print('✅ 在子目录中找到 MSI 安装包: ${msiFile.path}');
+      }
+    }
+
+    // 如果最终未找到 .exe，尝试使用 .msi 安装包
+    if (exeFile == null && msiFile != null) {
+      final msiPath = msiFile.path;
+      print('未找到 .exe，改用 MSI 安装包: $msiPath');
+      // 直接静默安装 MSI，安装程序通常会自行处理路径与重启
+      final process = await Process.start(
+        'msiexec',
+        ['/i', msiPath, '/quiet', '/norestart'],
+        runInShell: true,
+        mode: ProcessStartMode.detached,
+      );
+      await process.exitCode;
+      return null;
     }
 
     if (exeFile == null) {
-      print('错误: 在 ZIP 中未找到 .exe 文件');
+      print('错误: 在 ZIP 中未找到 .exe 或 .msi 文件');
       print('解压目录内容（顶层）:');
       for (final entity in topLevelEntities) {
         final entityType = entity is Directory ? '目录' : '文件';
@@ -605,7 +624,7 @@ class AppUpdaterService {
         final entityType = entity is Directory ? '目录' : '文件';
         print('  - ${entity.path} ($entityType)');
       }
-      throw Exception('在 ZIP 中未找到 .exe 文件');
+      throw Exception('在 ZIP 中未找到 .exe 或 .msi 文件');
     }
 
     // 验证 .exe 文件是否存在
@@ -786,53 +805,22 @@ class AppUpdaterService {
       throw Exception('在 ZIP 中未找到 .app 文件，请检查 ZIP 文件格式');
     }
 
-    // 复制应用到 Applications 目录
+    // 复制应用到目标目录（优先 /Applications，失败则退回 ~/Applications）
     final applicationsDir = Directory('/Applications');
     final appName = path.basename(appFile.path);
-    final targetApp = Directory(path.join(applicationsDir.path, appName));
+    final homeDir = Platform.environment['HOME'];
+    final fallbackDir = homeDir != null
+        ? Directory(path.join(homeDir, 'Applications', appName))
+        : null;
 
-    print('目标路径: ${targetApp.path}');
+    final installedPath =
+        await _copyAppBundle(appFile, Directory(path.join(applicationsDir.path, appName)),
+            fallbackDir: fallbackDir);
 
-    // 如果应用已存在，先尝试删除（可选步骤，为了干净）
-    // 注意：在更新自己的应用时，应用可能正在运行，删除可能会失败
-    // 如果删除失败，不要紧，ditto 命令可以直接覆盖已存在的文件
-    if (await targetApp.exists()) {
-      print('检测到旧应用存在，尝试删除: ${targetApp.path}');
-
-      // 尝试使用 rm 删除（静默失败，不影响后续流程）
-      try {
-        var rmResult = await Process.run('rm', ['-rf', targetApp.path]);
-        if (rmResult.exitCode == 0) {
-          print('rm 删除成功');
-          await Future.delayed(const Duration(milliseconds: 500));
-        } else {
-          print('rm 删除失败（可能由于权限或文件锁定），将使用 ditto 直接覆盖: ${rmResult.stderr}');
-        }
-      } catch (e) {
-        print('rm 删除异常，将使用 ditto 直接覆盖: $e');
-      }
-    }
-
-    // 复制新应用（使用 ditto 命令，-Vk 参数可以覆盖已存在的文件）
-    // -V: 详细输出
-    // -k: 保留扩展属性
-    // 注意：即使删除失败，ditto 也能覆盖已存在的文件
-    print('复制应用到 /Applications...');
-    final copyResult = await Process.run(
-      'ditto',
-      ['-Vk', appFile.path, targetApp.path],
-    );
-
-    if (copyResult.exitCode != 0) {
-      // 如果 ditto 也失败，可能是权限问题，尝试使用 sudo（需要用户授权）
-      print('ditto 复制失败，尝试使用 sudo: ${copyResult.stderr}');
-      throw Exception('复制应用失败: ${copyResult.stderr}\n请确保应用已退出或检查权限设置');
-    }
-
-    print('应用安装成功: ${targetApp.path}');
+    print('应用安装成功: $installedPath');
 
     // 返回新应用的路径，用于重启
-    return targetApp.path;
+    return installedPath;
   }
 
   /// 比较版本号
@@ -857,5 +845,252 @@ class AppUpdaterService {
     }
 
     return 0;
+  }
+
+  /// 终止指定应用路径的进程（如果正在运行）
+  Future<void> _terminateAppIfRunning(String appPath) async {
+    try {
+      // 获取应用的 bundle identifier 或名称
+      final appName = path.basename(appPath);
+      final appNameWithoutExt = path.basenameWithoutExtension(appName);
+      
+      print('检查并终止旧应用进程: $appName');
+      
+      // 使用 ps 和 grep 查找正在运行的进程
+      final psResult = await Process.run(
+        'ps',
+        ['-eo', 'pid,comm', '|', 'grep', '-i', appNameWithoutExt],
+        runInShell: true,
+      );
+      
+      // 如果找到进程，尝试终止
+      if (psResult.exitCode == 0 && psResult.stdout.toString().trim().isNotEmpty) {
+        final output = psResult.stdout.toString();
+        final lines = output.split('\n').where((line) => line.trim().isNotEmpty);
+        
+        for (final line in lines) {
+          final parts = line.trim().split(RegExp(r'\s+'));
+          if (parts.isNotEmpty) {
+            final pid = parts[0];
+            final comm = parts.length > 1 ? parts[1] : '';
+            
+            // 检查是否是目标应用（避免误杀其他应用）
+            if (comm.toLowerCase().contains(appNameWithoutExt.toLowerCase())) {
+              print('找到正在运行的进程 PID: $pid, 命令: $comm');
+              
+              // 尝试优雅终止
+              try {
+                await Process.run('kill', [pid]);
+                print('已发送终止信号给进程 $pid');
+                
+                // 等待进程退出（最多等待 2 秒）
+                await Future.delayed(const Duration(seconds: 2));
+                
+                // 检查进程是否还在运行，如果还在则强制终止
+                final checkResult = await Process.run(
+                  'ps',
+                  ['-p', pid],
+                  runInShell: false,
+                );
+                
+                if (checkResult.exitCode == 0) {
+                  print('进程仍在运行，强制终止: $pid');
+                  await Process.run('kill', ['-9', pid]);
+                }
+              } catch (e) {
+                print('终止进程失败（可能进程已退出）: $e');
+              }
+            }
+          }
+        }
+      }
+      
+      // 也尝试使用 pkill 终止（更简单的方法）
+      try {
+        final pkillResult = await Process.run(
+          'pkill',
+          ['-f', appNameWithoutExt],
+          runInShell: false,
+        );
+        if (pkillResult.exitCode == 0) {
+          print('使用 pkill 终止进程成功');
+          // 等待进程退出
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      } catch (e) {
+        print('pkill 终止进程失败（可能进程不存在）: $e');
+      }
+    } catch (e) {
+      print('检查或终止旧应用进程时出错（可忽略）: $e');
+    }
+  }
+
+  /// 删除旧版本应用（如果存在）
+  Future<void> _removeOldApp(Directory targetApp) async {
+    if (!await targetApp.exists()) {
+      print('旧应用不存在: ${targetApp.path}');
+      return;
+    }
+
+    print('尝试删除旧应用: ${targetApp.path}');
+    
+    try {
+      // 先尝试使用 rm 命令删除
+      final rmResult = await Process.run(
+        'rm',
+        ['-rf', targetApp.path],
+        runInShell: false,
+      );
+      
+      if (rmResult.exitCode == 0) {
+        print('成功删除旧应用: ${targetApp.path}');
+        // 等待文件系统同步
+        await Future.delayed(const Duration(milliseconds: 500));
+        return;
+      }
+      
+      // 如果 rm 失败，尝试使用 ditto 删除（可能更可靠）
+      print('rm 删除失败，尝试其他方法: ${rmResult.stderr}');
+      
+      // 使用 Finder 的 trash（作为最后手段）
+      final trashResult = await Process.run(
+        'osascript',
+        [
+          '-e',
+          'tell application "Finder" to delete POSIX file "${targetApp.path}"',
+        ],
+        runInShell: false,
+      );
+      
+      if (trashResult.exitCode == 0) {
+        print('已移动到废纸篓: ${targetApp.path}');
+        await Future.delayed(const Duration(milliseconds: 500));
+      } else {
+        print('删除旧应用失败: ${trashResult.stderr}');
+      }
+    } catch (e) {
+      print('删除旧应用时出错: $e');
+      // 不抛出异常，继续尝试复制（可能会覆盖）
+    }
+  }
+
+  /// 复制 macOS .app 包到目标目录，失败时尝试用户级 Applications
+  Future<String> _copyAppBundle(Directory appFile, Directory primaryTarget,
+      {Directory? fallbackDir}) async {
+    // 在复制前先终止旧应用进程
+    await _terminateAppIfRunning(primaryTarget.path);
+    if (fallbackDir != null) {
+      await _terminateAppIfRunning(fallbackDir.path);
+    }
+    
+    Future<String?> attemptCopy(Directory target) async {
+      print('尝试复制到: ${target.path}');
+      
+      // 在复制前删除旧版本应用（如果存在）
+      await _removeOldApp(target);
+      
+      // 确保父目录存在
+      try {
+        await target.parent.create(recursive: true);
+      } catch (e) {
+        print('创建父目录失败（可能已存在）: $e');
+      }
+
+      // 再次检查目标是否存在（删除后）
+      if (await target.exists()) {
+        print('警告: 目标应用仍存在，尝试强制删除...');
+        try {
+          await target.delete(recursive: true);
+          await Future.delayed(const Duration(milliseconds: 500));
+        } catch (e) {
+          print('强制删除失败: $e');
+        }
+      }
+
+      print('开始使用 ditto 复制: ${appFile.path} -> ${target.path}');
+      final copyResult = await Process.run(
+        'ditto',
+        ['-Vk', appFile.path, target.path],
+        runInShell: false,
+      );
+
+      print('ditto 退出码: ${copyResult.exitCode}');
+      if (copyResult.stdout.toString().trim().isNotEmpty) {
+        print('ditto stdout: ${copyResult.stdout}');
+      }
+      if (copyResult.stderr.toString().trim().isNotEmpty) {
+        print('ditto stderr: ${copyResult.stderr}');
+      }
+
+      if (copyResult.exitCode == 0) {
+        // 验证复制是否成功
+        if (await target.exists()) {
+          print('ditto 复制成功: ${target.path}');
+          return target.path;
+        } else {
+          print('警告: ditto 返回成功但目标不存在');
+          return null;
+        }
+      }
+
+      // 如果 ditto 失败，尝试使用 cp 命令（某些情况下可能更可靠）
+      print('ditto 失败，尝试使用 cp 命令...');
+      final cpResult = await Process.run(
+        'cp',
+        ['-R', appFile.path, target.path],
+        runInShell: false,
+      );
+
+      print('cp 退出码: ${cpResult.exitCode}');
+      if (cpResult.stderr.toString().trim().isNotEmpty) {
+        print('cp stderr: ${cpResult.stderr}');
+      }
+
+      if (cpResult.exitCode == 0 && await target.exists()) {
+        print('cp 复制成功: ${target.path}');
+        return target.path;
+      }
+
+      print('所有复制方法都失败了');
+      final errorDetails = {
+        'ditto_exit_code': copyResult.exitCode,
+        'ditto_stderr': copyResult.stderr.toString(),
+        'cp_exit_code': cpResult.exitCode,
+        'cp_stderr': cpResult.stderr.toString(),
+      };
+      print('错误详情: $errorDetails');
+      
+      return null;
+    }
+
+    // 优先尝试 /Applications
+    final primaryResult = await attemptCopy(primaryTarget);
+    if (primaryResult != null) {
+      return primaryResult;
+    }
+
+    // 权限或被占用时退回用户目录
+    if (fallbackDir != null) {
+      print('尝试回退到用户级 Applications: ${fallbackDir.path}');
+      final fallbackResult = await attemptCopy(fallbackDir);
+      if (fallbackResult != null) {
+        print('已复制到用户级 Applications: $fallbackResult');
+        return fallbackResult;
+      }
+    }
+
+    // 构建详细的错误信息
+    final errorMsg = StringBuffer();
+    errorMsg.writeln('复制应用失败，可能的原因：');
+    errorMsg.writeln('1. 缺少写入 /Applications 的权限（需要管理员权限）');
+    errorMsg.writeln('2. 文件被占用或锁定');
+    errorMsg.writeln('3. 磁盘空间不足');
+    errorMsg.writeln('');
+    errorMsg.writeln('建议解决方案：');
+    errorMsg.writeln('1. 手动将应用拖入 /Applications 目录');
+    errorMsg.writeln('2. 使用具有管理员权限的账户重试');
+    errorMsg.writeln('3. 检查是否有其他进程占用应用文件');
+    
+    throw Exception(errorMsg.toString());
   }
 }
