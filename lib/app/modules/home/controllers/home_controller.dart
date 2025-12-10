@@ -708,45 +708,28 @@ class HomeController extends GetxController {
 
       SmartDialog.showLoading(msg: '正在查询场景资源列表...');
 
-      // 请求所有数据，分页获取
-      List<dynamic> allDataList = [];
-      int pageNo = 1;
-      const pageSize = 20;
-      bool hasMore = true;
-
-      while (hasMore) {
-        final response = await global.post(
-          path:
-              '/api/platformservice/sceneResourceManager/querySceneSourceList',
-          data: {
-            'page': {
-              'pageSize': pageSize,
-              'pageNo': pageNo,
-            },
+      // 只查询最新的100条数据
+      const pageSize = 100;
+      final response = await global.post(
+        path:
+            '/api/platformservice/sceneResourceManager/querySceneSourceList',
+        data: {
+          'page': {
+            'pageSize': pageSize,
+            'pageNo': 1,
           },
-        );
+        },
+      );
 
-        final success = JSON(response.data)['success'].boolValue;
-        final message = JSON(response.data)['message'].string ?? '未知错误';
-        if (!success) {
-          SmartDialog.dismiss();
-          throw ToastException('查询场景资源列表失败\n错误: $message');
-        }
-
-        final pageData = JSON(response.data)['data'];
-        final list = pageData['list'].listValue;
-        final total = pageData['total'].intValue;
-
-        // 将当前页数据添加到总列表
-        allDataList.addAll(list);
-
-        // 检查是否还有更多数据
-        if (allDataList.length >= total || list.isEmpty) {
-          hasMore = false;
-        } else {
-          pageNo++;
-        }
+      final success = JSON(response.data)['success'].boolValue;
+      final message = JSON(response.data)['message'].string ?? '未知错误';
+      if (!success) {
+        SmartDialog.dismiss();
+        throw ToastException('查询场景资源列表失败\n错误: $message');
       }
+
+      final pageData = JSON(response.data)['data'];
+      final allDataList = pageData['list'].listValue;
 
       SmartDialog.dismiss();
 
@@ -843,45 +826,28 @@ class HomeController extends GetxController {
     try {
       SmartDialog.showLoading(msg: '正在检查版本号是否已被使用...');
 
-      // 请求所有数据，分页获取
-      List<dynamic> allDataList = [];
-      int pageNo = 1;
-      const pageSize = 20;
-      bool hasMore = true;
-
-      while (hasMore) {
-        final response = await global.post(
-          path:
-              '/api/platformservice/sceneResourceManager/querySceneSourceList',
-          data: {
-            'page': {
-              'pageSize': pageSize,
-              'pageNo': pageNo,
-            },
+      // 只查询最新的100条数据
+      const pageSize = 100;
+      final response = await global.post(
+        path:
+            '/api/platformservice/sceneResourceManager/querySceneSourceList',
+        data: {
+          'page': {
+            'pageSize': pageSize,
+            'pageNo': 1,
           },
-        );
+        },
+      );
 
-        final success = JSON(response.data)['success'].boolValue;
-        final message = JSON(response.data)['message'].string ?? '未知错误';
-        if (!success) {
-          SmartDialog.dismiss();
-          throw ToastException('查询场景资源列表失败\n错误: $message');
-        }
-
-        final pageData = JSON(response.data)['data'];
-        final list = pageData['list'].listValue;
-        final total = pageData['total'].intValue;
-
-        // 将当前页数据添加到总列表
-        allDataList.addAll(list);
-
-        // 检查是否还有更多数据
-        if (allDataList.length >= total || list.isEmpty) {
-          hasMore = false;
-        } else {
-          pageNo++;
-        }
+      final success = JSON(response.data)['success'].boolValue;
+      final message = JSON(response.data)['message'].string ?? '未知错误';
+      if (!success) {
+        SmartDialog.dismiss();
+        throw ToastException('查询场景资源列表失败\n错误: $message');
       }
+
+      final pageData = JSON(response.data)['data'];
+      final allDataList = pageData['list'].listValue;
 
       SmartDialog.dismiss();
 
@@ -943,21 +909,26 @@ class HomeController extends GetxController {
       return minVersion;
     }
 
-    // 将最后一部分补零到5位数，例如：5 -> 50000
-    // 确保最后一部分严格是5位数
+    // 将最后一部分补零到5位数，例如：5 -> 50000, 100 -> 100001, 99 -> 99001
+    // 确保最后一部分最大是5位数
     final lastPart = int.tryParse(parts.last) ?? 0;
-    if (lastPart < 10000) {
-      // 小于10000的，乘以10000变成5位数
-      parts[parts.length - 1] = (lastPart * 10000).toString().padLeft(5, '0');
+    final lastPartStr = lastPart.toString();
+    
+    if (lastPartStr.length >= 5) {
+      // 如果已经是5位或更多，取后5位（确保最大是5位）
+      parts[parts.length - 1] = lastPartStr.length > 5 
+          ? lastPartStr.substring(lastPartStr.length - 5)
+          : lastPartStr;
     } else {
-      // 已经是5位数或更多，确保正好是5位数（如果超过5位，取后5位）
-      final lastPartStr = lastPart.toString();
-      if (lastPartStr.length > 5) {
-        // 如果超过5位，取后5位（处理异常情况）
-        parts[parts.length - 1] = lastPartStr.substring(lastPartStr.length - 5);
+      // 小于5位的，乘以10000变成5位数
+      // 例如：5 -> 50000, 99 -> 99001, 100 -> 100001
+      final multiplied = lastPart * 10000;
+      final multipliedStr = multiplied.toString();
+      // 如果乘以10000后超过5位，取后5位
+      if (multipliedStr.length > 5) {
+        parts[parts.length - 1] = multipliedStr.substring(multipliedStr.length - 5);
       } else {
-        // 确保正好5位，不足5位前面补0
-        parts[parts.length - 1] = lastPartStr.padLeft(5, '0');
+        parts[parts.length - 1] = multipliedStr.padLeft(5, '0');
       }
     }
 
@@ -983,17 +954,18 @@ class HomeController extends GetxController {
       return version;
     }
 
-    // 将最后一部分+1，并确保保持5位数
+    // 将最后一部分+1，并确保最大是5位数
     final lastPart = int.tryParse(parts.last) ?? 0;
     final incremented = lastPart + 1;
 
-    // 确保递增后的版本号保持5位数（如果超过99999，取模处理）
-    final incrementedStr = incremented.toString().padLeft(5, '0');
+    // 确保递增后的版本号最大是5位数（如果超过5位，取后5位）
+    final incrementedStr = incremented.toString();
     if (incrementedStr.length > 5) {
-      // 如果超过5位，取后5位（处理异常情况）
+      // 如果超过5位，取后5位
       parts[parts.length - 1] =
           incrementedStr.substring(incrementedStr.length - 5);
     } else {
+      // 如果不超过5位，保持原样（不补零）
       parts[parts.length - 1] = incrementedStr;
     }
 
