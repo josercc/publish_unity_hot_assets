@@ -5,10 +5,12 @@ abstract class Routes {
   Routes._();
   static const HOME = _Paths.HOME;
   static const LOGIN = _Paths.LOGIN;
+  static const JENKINS_SERVERS = _Paths.JENKINS_SERVERS;
 }
 
 abstract class _Paths {
   _Paths._();
   static const HOME = '/home';
   static const LOGIN = '/login';
+  static const JENKINS_SERVERS = '/jenkins-servers';
 }

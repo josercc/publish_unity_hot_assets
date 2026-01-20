@@ -6,6 +6,7 @@ import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/functions.dart';
+import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 
 import '../controllers/login_controller.dart';
 
@@ -54,11 +55,6 @@ class LoginView extends GetView<LoginController> {
                   controller: controller.gmallKeyController,
                 ),
                 _buildListInput(
-                  title: 'Jenkins请求地址',
-                  placeholder: '请输入请求地址',
-                  controller: controller.jenkinsUrlController,
-                ),
-                _buildListInput(
                   title: 'Gmall用户名',
                   placeholder: '请输入用户名',
                   controller: controller.userNameTextController,
@@ -69,17 +65,44 @@ class LoginView extends GetView<LoginController> {
                   controller: controller.passwordTextController,
                   isPassword: true,
                 ),
-                _buildListInput(
-                  title: 'Jenkins用户名',
-                  placeholder: '请输入用户名',
-                  controller: controller.jenkinsUserNameTextController,
-                ),
-                _buildListInput(
-                  title: 'Jenkins密码',
-                  placeholder: '请输入密码',
-                  controller: controller.jenkinsPasswordTextController,
-                  isPassword: true,
-                ),
+                // Jenkins 服务器选择：放在登录按钮前最后一项
+                Obx(() {
+                  return Card(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            title: const Text('选择 Jenkins 服务器'),
+                            subtitle: controller.jenkinsServers.isEmpty
+                                ? const Text('未配置服务器，请先配置服务器')
+                                : DropdownButton<String>(
+                                    isExpanded: true,
+                                    value: controller.selectedJenkinsServerId.value,
+                                    items: controller.jenkinsServers
+                                        .map(
+                                          (e) => DropdownMenuItem(
+                                            value: e.id,
+                                            child: Text(e.displayName),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (id) {
+                                      controller.selectServer(id);
+                                    },
+                                  ),
+                            trailing: TextButton(
+                              onPressed: () {
+                                Get.toNamed(Routes.JENKINS_SERVERS);
+                              },
+                              child: const Text('配置'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
                 ElevatedButton(
                   onPressed: () async {
                     try {

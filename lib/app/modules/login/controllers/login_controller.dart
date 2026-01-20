@@ -13,10 +13,12 @@ import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginController extends GetxController {
+  static const String _sharedJenkinsKey = 'shared_jenkins_servers';
   final userNameTextController = TextEditingController();
   final passwordTextController = TextEditingController();
   final jenkinsUserNameTextController = TextEditingController();
   final jenkinsPasswordTextController = TextEditingController();
+  final jenkinsServerNameTextController = TextEditingController();
 
   /// Gmall 请求地址
   TextEditingController gmallUrlController = TextEditingController();
@@ -30,6 +32,12 @@ class LoginController extends GetxController {
   /// 当前环境
   final curEnv = Environment.test.obs;
 
+  /// Jenkins 服务器列表
+  final jenkinsServers = <JenkinsServerConfig>[].obs;
+
+  /// 当前选中的 Jenkins 服务器 ID
+  final selectedJenkinsServerId = RxnString();
+
   @override
   void onInit() {
     super.onInit();
@@ -39,6 +47,78 @@ class LoginController extends GetxController {
   switchEnv(Environment env) {
     curEnv.value = env;
     initLocalLoginInfo(curEnv.value);
+  }
+
+  JenkinsServerConfig? get selectedServer {
+    final id = selectedJenkinsServerId.value;
+    if (id == null) return null;
+    try {
+      return jenkinsServers.firstWhere((e) => e.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void selectServer(String? id) {
+    if (id == null) return;
+    selectedJenkinsServerId.value = id;
+    final server = selectedServer;
+    if (server == null) return;
+    jenkinsServerNameTextController.text = server.name;
+    jenkinsUrlController.text = server.jenkinsUrl;
+    jenkinsUserNameTextController.text = server.jenkinsUsername;
+    jenkinsPasswordTextController.text = server.jenkinsPassword;
+  }
+
+  void upsertSelectedServerFromInputs() {
+    final current = selectedServer;
+    final nameInput = jenkinsServerNameTextController.text.trim();
+    final url = jenkinsUrlController.text.trim();
+    String host = '';
+    try {
+      host = Uri.parse(url).host.trim();
+    } catch (_) {
+      host = '';
+    }
+    final name = nameInput.isEmpty ? (host.isEmpty ? url : host) : nameInput;
+    final username = jenkinsUserNameTextController.text.trim();
+    final password = jenkinsPasswordTextController.text;
+
+    if (current == null) {
+      final id = DateTime.now().millisecondsSinceEpoch.toString();
+      final newServer = JenkinsServerConfig(
+        id: id,
+        name: name,
+        jenkinsUrl: url,
+        jenkinsUsername: username,
+        jenkinsPassword: password,
+      );
+      jenkinsServers.add(newServer);
+      selectedJenkinsServerId.value = id;
+    } else {
+      final idx = jenkinsServers.indexWhere((e) => e.id == current.id);
+      if (idx >= 0) {
+        jenkinsServers[idx] = current.copyWith(
+          name: name,
+          jenkinsUrl: url,
+          jenkinsUsername: username,
+          jenkinsPassword: password,
+        );
+      }
+    }
+  }
+
+  void addServer() {
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final newServer = JenkinsServerConfig(
+      id: id,
+      name: '',
+      jenkinsUrl: '',
+      jenkinsUsername: '',
+      jenkinsPassword: '',
+    );
+    jenkinsServers.add(newServer);
+    selectServer(id);
   }
 
 //   // RSA公钥（PEM格式）
@@ -51,11 +131,8 @@ class LoginController extends GetxController {
   login() async {
     final gmallUrl = gmallUrlController.text;
     final gmallKey = gmallKeyController.text;
-    final jenkinsUrl = jenkinsUrlController.text;
     final userName = userNameTextController.text;
     final password = passwordTextController.text;
-    final jenkinsUserName = jenkinsUserNameTextController.text;
-    final jenkinsPassword = jenkinsPasswordTextController.text;
     if (gmallUrl.isEmpty) {
       showErrorToast('请输入 Gmall 请求地址');
       return;
@@ -71,6 +148,30 @@ class LoginController extends GetxController {
       return;
     }
 
+    if (userName.isEmpty) {
+      showErrorToast('请输入 Gmall 用户名');
+      return;
+    }
+    if (password.isEmpty) {
+      showErrorToast('请输入 Gmall 密码');
+      return;
+    }
+
+    // Jenkins 多服务器：必须先配置服务器
+    if (jenkinsServers.isEmpty) {
+      showErrorToast('请先配置服务器');
+      return;
+    }
+    // 把当前输入同步回选中服务器（避免用户改了字段但没保存）
+    upsertSelectedServerFromInputs();
+    final server = selectedServer;
+    if (server == null) {
+      showErrorToast('请先配置服务器');
+      return;
+    }
+    final jenkinsUrl = server.jenkinsUrl.trim();
+    final jenkinsUserName = server.jenkinsUsername.trim();
+    final jenkinsPassword = server.jenkinsPassword;
     if (jenkinsUrl.isEmpty) {
       showErrorToast('请输入 Jenkins 请求地址');
       return;
@@ -78,14 +179,6 @@ class LoginController extends GetxController {
     // 验证Jenkins URL格式
     if (!_isValidUrl(jenkinsUrl)) {
       showErrorToast('Jenkins 请求地址格式不正确');
-      return;
-    }
-    if (userName.isEmpty) {
-      showErrorToast('请输入 Gmall 用户名');
-      return;
-    }
-    if (password.isEmpty) {
-      showErrorToast('请输入 Gmall 密码');
       return;
     }
     if (jenkinsUserName.isEmpty) {
@@ -107,11 +200,17 @@ class LoginController extends GetxController {
       gmallPassword: password,
       jenkinsUsername: jenkinsUserName,
       jenkinsPassword: jenkinsPassword,
+      jenkinsServers: jenkinsServers.toList(),
+      selectedJenkinsServerId: selectedJenkinsServerId.value,
     );
     SharedPreferences sp = await SharedPreferences.getInstance();
     await sp.setString(
       curEnv.value.toString(),
       jsonEncode(loginConfig.toJson()),
+    );
+    await _saveSharedJenkinsSnapshot(
+      servers: jenkinsServers.toList(),
+      selectedId: selectedJenkinsServerId.value,
     );
 
     JenkinsApi jenkinsApi = JenkinsApi(
@@ -162,16 +261,55 @@ $gmallKey
 
     /// 从本地获取登录配置
     String? loginConfigStr = sp.getString(environment.toString());
+    final shared = await _loadSharedJenkinsSnapshot();
     if (loginConfigStr != null) {
       LoginConfig loginConfig =
           LoginConfig.fromJson(jsonDecode(loginConfigStr));
       gmallUrlController.text = loginConfig.environmentConfig.gmallUrl;
       gmallKeyController.text = loginConfig.environmentConfig.gmallKey;
-      jenkinsUrlController.text = loginConfig.environmentConfig.jenkinsUrl;
       userNameTextController.text = loginConfig.gmallUsername;
       passwordTextController.text = loginConfig.gmallPassword;
-      jenkinsUserNameTextController.text = loginConfig.jenkinsUsername;
-      jenkinsPasswordTextController.text = loginConfig.jenkinsPassword;
+
+      final envServers = loginConfig.jenkinsServers;
+      final envSelected = loginConfig.selectedJenkinsServerId;
+      final useServers =
+          envServers.isNotEmpty ? envServers : shared.servers;
+      final useSelected =
+          envSelected ?? shared.selectedId ?? (useServers.isNotEmpty ? useServers.first.id : null);
+
+      jenkinsServers.assignAll(useServers);
+      selectedJenkinsServerId.value = useSelected;
+
+      // 迁移后立刻把选中服务器的字段回填到输入框
+      final server = selectedServer ?? (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
+      if (server != null) {
+        selectedJenkinsServerId.value = server.id;
+        jenkinsServerNameTextController.text = server.name;
+        jenkinsUrlController.text = server.jenkinsUrl;
+        jenkinsUserNameTextController.text = server.jenkinsUsername;
+        jenkinsPasswordTextController.text = server.jenkinsPassword;
+
+        // 如果是迁移出来的配置，这里顺手写回新结构，避免下次还要走迁移逻辑
+        final migrated = LoginConfig(
+          environmentConfig: loginConfig.environmentConfig,
+          gmallUsername: loginConfig.gmallUsername,
+          gmallPassword: loginConfig.gmallPassword,
+          jenkinsUsername: loginConfig.jenkinsUsername,
+          jenkinsPassword: loginConfig.jenkinsPassword,
+          jenkinsServers: jenkinsServers.toList(),
+          selectedJenkinsServerId: selectedJenkinsServerId.value,
+        );
+        await sp.setString(environment.toString(), jsonEncode(migrated.toJson()));
+        await _saveSharedJenkinsSnapshot(
+          servers: jenkinsServers.toList(),
+          selectedId: selectedJenkinsServerId.value,
+        );
+      } else {
+        jenkinsServerNameTextController.clear();
+        jenkinsUrlController.clear();
+        jenkinsUserNameTextController.clear();
+        jenkinsPasswordTextController.clear();
+      }
     } else {
       gmallKeyController.clear();
       gmallUrlController.clear();
@@ -180,8 +318,59 @@ $gmallKey
       passwordTextController.clear();
       jenkinsUserNameTextController.clear();
       jenkinsPasswordTextController.clear();
+      jenkinsServerNameTextController.clear();
+      jenkinsServers.clear();
+      selectedJenkinsServerId.value = null;
     }
     SmartDialog.dismiss();
+  }
+
+  /// 仅存储共享的 Jenkins 配置（测试/生产共用）
+  Future<void> _saveSharedJenkinsSnapshot({
+    required List<JenkinsServerConfig> servers,
+    required String? selectedId,
+  }) async {
+    final sp = await SharedPreferences.getInstance();
+    final data = {
+      'jenkinsServers': servers.map((e) => e.toJson()).toList(),
+      'selectedJenkinsServerId': selectedId,
+    };
+    await sp.setString(_sharedJenkinsKey, jsonEncode(data));
+  }
+
+  /// 读取共享 Jenkins 配置
+  Future<_SharedJenkinsConfig> _loadSharedJenkinsSnapshot() async {
+    final sp = await SharedPreferences.getInstance();
+    final raw = sp.getString(_sharedJenkinsKey);
+    if (raw == null) return _SharedJenkinsConfig.empty();
+    try {
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final rawServers = json['jenkinsServers'];
+      List<JenkinsServerConfig> servers = [];
+      if (rawServers is List) {
+        servers = rawServers
+            .whereType<Map>()
+            .map((e) => JenkinsServerConfig.fromJson(Map<String, dynamic>.from(e)))
+            .where((e) => e.id.trim().isNotEmpty)
+            .toList();
+      }
+      final selectedId = (json['selectedJenkinsServerId'] as String?)?.toString();
+      final normalizedSelected =
+          (selectedId != null && servers.any((e) => e.id == selectedId))
+              ? selectedId
+              : (servers.isNotEmpty ? servers.first.id : null);
+      return _SharedJenkinsConfig(servers: servers, selectedId: normalizedSelected);
+    } catch (_) {
+      return _SharedJenkinsConfig.empty();
+    }
+  }
+
+  /// 对外暴露：使用当前内存中的 Jenkins 配置写入共享存储
+  Future<void> saveSharedJenkinsCurrent() async {
+    await _saveSharedJenkinsSnapshot(
+      servers: jenkinsServers.toList(),
+      selectedId: selectedJenkinsServerId.value,
+    );
   }
 
   /// 验证URL格式
@@ -194,3 +383,15 @@ $gmallKey
     }
   }
 }
+
+class _SharedJenkinsConfig {
+  final List<JenkinsServerConfig> servers;
+  final String? selectedId;
+  const _SharedJenkinsConfig({
+    required this.servers,
+    required this.selectedId,
+  });
+  factory _SharedJenkinsConfig.empty() =>
+      const _SharedJenkinsConfig(servers: [], selectedId: null);
+}
+
