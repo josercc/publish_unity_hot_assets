@@ -924,9 +924,9 @@ class HomeController extends GetxController {
       // 例如：5 -> 50000, 99 -> 99001, 100 -> 100001
       final multiplied = lastPart * 10000;
       final multipliedStr = multiplied.toString();
-      // 如果乘以10000后超过5位，取后5位
+      // 如果乘以10000后超过5位，取前5位
       if (multipliedStr.length > 5) {
-        parts[parts.length - 1] = multipliedStr.substring(multipliedStr.length - 5);
+        parts[parts.length - 1] = multipliedStr.substring(0, 5);
       } else {
         parts[parts.length - 1] = multipliedStr.padLeft(5, '0');
       }
