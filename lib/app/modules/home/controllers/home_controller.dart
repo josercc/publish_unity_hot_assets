@@ -958,15 +958,14 @@ class HomeController extends GetxController {
     final lastPart = int.tryParse(parts.last) ?? 0;
     final incremented = lastPart + 1;
 
-    // 确保递增后的版本号最大是5位数（如果超过5位，取后5位）
+    // 确保递增后的第三段始终是 5 位数字（与 versionReg / _generateInitialVersion 一致）
     final incrementedStr = incremented.toString();
     if (incrementedStr.length > 5) {
       // 如果超过5位，取后5位
       parts[parts.length - 1] =
           incrementedStr.substring(incrementedStr.length - 5);
     } else {
-      // 如果不超过5位，保持原样（不补零）
-      parts[parts.length - 1] = incrementedStr;
+      parts[parts.length - 1] = incrementedStr.padLeft(5, '0');
     }
 
     final incrementedVersion = parts.join('.');
