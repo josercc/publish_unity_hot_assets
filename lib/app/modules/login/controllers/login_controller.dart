@@ -257,72 +257,83 @@ $gmallKey
   /// 初始化本地登录信息
   initLocalLoginInfo(Environment environment) async {
     SmartDialog.showLoading();
-    SharedPreferences sp = await SharedPreferences.getInstance();
+    try {
+      final sp = await SharedPreferences.getInstance();
 
-    /// 从本地获取登录配置
-    String? loginConfigStr = sp.getString(environment.toString());
-    final shared = await _loadSharedJenkinsSnapshot();
-    if (loginConfigStr != null) {
-      LoginConfig loginConfig =
-          LoginConfig.fromJson(jsonDecode(loginConfigStr));
-      gmallUrlController.text = loginConfig.environmentConfig.gmallUrl;
-      gmallKeyController.text = loginConfig.environmentConfig.gmallKey;
-      userNameTextController.text = loginConfig.gmallUsername;
-      passwordTextController.text = loginConfig.gmallPassword;
+      /// 从本地获取登录配置
+      final loginConfigStr = sp.getString(environment.toString());
+      final shared = await _loadSharedJenkinsSnapshot();
+      if (loginConfigStr != null) {
+        final loginConfig = LoginConfig.fromJson(jsonDecode(loginConfigStr));
+        gmallUrlController.text = loginConfig.environmentConfig.gmallUrl;
+        gmallKeyController.text = loginConfig.environmentConfig.gmallKey;
+        userNameTextController.text = loginConfig.gmallUsername;
+        passwordTextController.text = loginConfig.gmallPassword;
 
-      final envServers = loginConfig.jenkinsServers;
-      final envSelected = loginConfig.selectedJenkinsServerId;
-      final useServers =
-          envServers.isNotEmpty ? envServers : shared.servers;
-      final useSelected =
-          envSelected ?? shared.selectedId ?? (useServers.isNotEmpty ? useServers.first.id : null);
+        final envServers = loginConfig.jenkinsServers;
+        final envSelected = loginConfig.selectedJenkinsServerId;
+        final useServers = envServers.isNotEmpty ? envServers : shared.servers;
+        final useSelected = envSelected ??
+            shared.selectedId ??
+            (useServers.isNotEmpty ? useServers.first.id : null);
 
-      jenkinsServers.assignAll(useServers);
-      selectedJenkinsServerId.value = useSelected;
+        jenkinsServers.assignAll(useServers);
+        selectedJenkinsServerId.value = useSelected;
 
-      // 迁移后立刻把选中服务器的字段回填到输入框
-      final server = selectedServer ?? (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
-      if (server != null) {
-        selectedJenkinsServerId.value = server.id;
-        jenkinsServerNameTextController.text = server.name;
-        jenkinsUrlController.text = server.jenkinsUrl;
-        jenkinsUserNameTextController.text = server.jenkinsUsername;
-        jenkinsPasswordTextController.text = server.jenkinsPassword;
+        // 迁移后立刻把选中服务器的字段回填到输入框
+        final server = selectedServer ??
+            (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
+        if (server != null) {
+          selectedJenkinsServerId.value = server.id;
+          jenkinsServerNameTextController.text = server.name;
+          jenkinsUrlController.text = server.jenkinsUrl;
+          jenkinsUserNameTextController.text = server.jenkinsUsername;
+          jenkinsPasswordTextController.text = server.jenkinsPassword;
 
-        // 如果是迁移出来的配置，这里顺手写回新结构，避免下次还要走迁移逻辑
-        final migrated = LoginConfig(
-          environmentConfig: loginConfig.environmentConfig,
-          gmallUsername: loginConfig.gmallUsername,
-          gmallPassword: loginConfig.gmallPassword,
-          jenkinsUsername: loginConfig.jenkinsUsername,
-          jenkinsPassword: loginConfig.jenkinsPassword,
-          jenkinsServers: jenkinsServers.toList(),
-          selectedJenkinsServerId: selectedJenkinsServerId.value,
-        );
-        await sp.setString(environment.toString(), jsonEncode(migrated.toJson()));
-        await _saveSharedJenkinsSnapshot(
-          servers: jenkinsServers.toList(),
-          selectedId: selectedJenkinsServerId.value,
-        );
+          // 如果是迁移出来的配置，这里顺手写回新结构，避免下次还要走迁移逻辑
+          final migrated = LoginConfig(
+            environmentConfig: loginConfig.environmentConfig,
+            gmallUsername: loginConfig.gmallUsername,
+            gmallPassword: loginConfig.gmallPassword,
+            jenkinsUsername: loginConfig.jenkinsUsername,
+            jenkinsPassword: loginConfig.jenkinsPassword,
+            jenkinsServers: jenkinsServers.toList(),
+            selectedJenkinsServerId: selectedJenkinsServerId.value,
+          );
+          await sp.setString(
+            environment.toString(),
+            jsonEncode(migrated.toJson()),
+          );
+          await _saveSharedJenkinsSnapshot(
+            servers: jenkinsServers.toList(),
+            selectedId: selectedJenkinsServerId.value,
+          );
+        } else {
+          jenkinsServerNameTextController.clear();
+          jenkinsUrlController.clear();
+          jenkinsUserNameTextController.clear();
+          jenkinsPasswordTextController.clear();
+        }
       } else {
-        jenkinsServerNameTextController.clear();
+        gmallKeyController.clear();
+        gmallUrlController.clear();
         jenkinsUrlController.clear();
+        userNameTextController.clear();
+        passwordTextController.clear();
         jenkinsUserNameTextController.clear();
         jenkinsPasswordTextController.clear();
+        jenkinsServerNameTextController.clear();
+        jenkinsServers.clear();
+        selectedJenkinsServerId.value = null;
       }
-    } else {
-      gmallKeyController.clear();
-      gmallUrlController.clear();
-      jenkinsUrlController.clear();
-      userNameTextController.clear();
-      passwordTextController.clear();
-      jenkinsUserNameTextController.clear();
-      jenkinsPasswordTextController.clear();
-      jenkinsServerNameTextController.clear();
-      jenkinsServers.clear();
-      selectedJenkinsServerId.value = null;
+    } catch (e, stackTrace) {
+      // 这里不要让 loading 卡死；同时给出可排查的错误信息
+      print('初始化本地登录信息失败: $e');
+      print(stackTrace);
+      showErrorToast('读取本地配置失败，请重试或清理本地配置后再打开：$e');
+    } finally {
+      SmartDialog.dismiss();
     }
-    SmartDialog.dismiss();
   }
 
   /// 仅存储共享的 Jenkins 配置（测试/生产共用）
@@ -350,16 +361,19 @@ $gmallKey
       if (rawServers is List) {
         servers = rawServers
             .whereType<Map>()
-            .map((e) => JenkinsServerConfig.fromJson(Map<String, dynamic>.from(e)))
+            .map((e) =>
+                JenkinsServerConfig.fromJson(Map<String, dynamic>.from(e)))
             .where((e) => e.id.trim().isNotEmpty)
             .toList();
       }
-      final selectedId = (json['selectedJenkinsServerId'] as String?)?.toString();
+      final selectedId =
+          (json['selectedJenkinsServerId'] as String?)?.toString();
       final normalizedSelected =
           (selectedId != null && servers.any((e) => e.id == selectedId))
               ? selectedId
               : (servers.isNotEmpty ? servers.first.id : null);
-      return _SharedJenkinsConfig(servers: servers, selectedId: normalizedSelected);
+      return _SharedJenkinsConfig(
+          servers: servers, selectedId: normalizedSelected);
     } catch (_) {
       return _SharedJenkinsConfig.empty();
     }
@@ -394,4 +408,3 @@ class _SharedJenkinsConfig {
   factory _SharedJenkinsConfig.empty() =>
       const _SharedJenkinsConfig(servers: [], selectedId: null);
 }
-
