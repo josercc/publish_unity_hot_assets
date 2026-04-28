@@ -70,7 +70,10 @@ class JenkinsServersController extends GetxController {
         gmallPassword: '',
         jenkinsUsername: selectedServer?.jenkinsUsername ?? '',
         jenkinsPassword: selectedServer?.jenkinsPassword ?? '',
-        environmentConfig: EnvironmentConfig(gmallUrl: '', gmallKey: '', jenkinsUrl: selectedServer?.jenkinsUrl ?? ''),
+        environmentConfig: EnvironmentConfig(
+            gmallUrl: '',
+            gmallKey: '',
+            jenkinsUrl: selectedServer?.jenkinsUrl ?? ''),
         jenkinsServers: servers.toList(),
         selectedJenkinsServerId: selectedId.value,
       );
@@ -86,13 +89,16 @@ class JenkinsServersController extends GetxController {
         gmallUrl: existing.environmentConfig.gmallUrl,
         gmallKey: existing.environmentConfig.gmallKey,
         // 兼容旧字段：同步为选中服务器的 Jenkins URL
-        jenkinsUrl: currentSelected?.jenkinsUrl ?? existing.environmentConfig.jenkinsUrl,
+        jenkinsUrl: currentSelected?.jenkinsUrl ??
+            existing.environmentConfig.jenkinsUrl,
       ),
       gmallUsername: existing.gmallUsername,
       gmallPassword: existing.gmallPassword,
       // 兼容旧字段：同步为选中服务器的账号密码
-      jenkinsUsername: currentSelected?.jenkinsUsername ?? existing.jenkinsUsername,
-      jenkinsPassword: currentSelected?.jenkinsPassword ?? existing.jenkinsPassword,
+      jenkinsUsername:
+          currentSelected?.jenkinsUsername ?? existing.jenkinsUsername,
+      jenkinsPassword:
+          currentSelected?.jenkinsPassword ?? existing.jenkinsPassword,
       jenkinsServers: servers.toList(),
       selectedJenkinsServerId: selectedId.value,
     );
@@ -102,21 +108,33 @@ class JenkinsServersController extends GetxController {
 
   /// 校验并标准化：服务器名称可空，空则回退为服务器 IP
   JenkinsServerConfig normalize(JenkinsServerConfig server) {
-    final nameInput = server.name.trim();
-    if (server.jenkinsUrl.trim().isEmpty) {
+    final nameInput = _normalizeSingleLineValue(server.name);
+    final normalizedUrl = _normalizeSingleLineValue(server.jenkinsUrl);
+    final normalizedUsername =
+        _normalizeSingleLineValue(server.jenkinsUsername);
+    final normalizedPassword =
+        _normalizeSingleLineValue(server.jenkinsPassword);
+    if (normalizedUrl.isEmpty) {
       showErrorToast('请输入 Jenkins 请求地址');
       throw Exception('Jenkins请求地址为空');
     }
     String host = '';
     try {
-      host = Uri.parse(server.jenkinsUrl.trim()).host.trim();
+      host = Uri.parse(normalizedUrl).host.trim();
     } catch (_) {
       host = '';
     }
-    final fallbackName = host.isEmpty ? server.jenkinsUrl.trim() : host;
+    final fallbackName = host.isEmpty ? normalizedUrl : host;
     final name = nameInput.isEmpty ? fallbackName : nameInput;
-    return server.copyWith(name: name);
+    return server.copyWith(
+      name: name,
+      jenkinsUrl: normalizedUrl,
+      jenkinsUsername: normalizedUsername,
+      jenkinsPassword: normalizedPassword,
+    );
+  }
+
+  String _normalizeSingleLineValue(String value) {
+    return value.replaceAll(RegExp(r'[\r\n]+'), '').trim();
   }
 }
-
-

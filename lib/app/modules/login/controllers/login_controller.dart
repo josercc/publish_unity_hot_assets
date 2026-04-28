@@ -129,10 +129,12 @@ class LoginController extends GetxController {
 // ''';
 
   login() async {
-    final gmallUrl = gmallUrlController.text;
-    final gmallKey = gmallKeyController.text;
-    final userName = userNameTextController.text;
-    final password = passwordTextController.text;
+    _normalizeLoginInputs();
+
+    final gmallUrl = _normalizeSingleLineValue(gmallUrlController.text);
+    final gmallKey = _normalizeSingleLineValue(gmallKeyController.text);
+    final userName = _normalizeSingleLineValue(userNameTextController.text);
+    final password = _normalizeSingleLineValue(passwordTextController.text);
     if (gmallUrl.isEmpty) {
       showErrorToast('请输入 Gmall 请求地址');
       return;
@@ -169,9 +171,9 @@ class LoginController extends GetxController {
       showErrorToast('请先配置服务器');
       return;
     }
-    final jenkinsUrl = server.jenkinsUrl.trim();
-    final jenkinsUserName = server.jenkinsUsername.trim();
-    final jenkinsPassword = server.jenkinsPassword;
+    final jenkinsUrl = _normalizeSingleLineValue(server.jenkinsUrl);
+    final jenkinsUserName = _normalizeSingleLineValue(server.jenkinsUsername);
+    final jenkinsPassword = _normalizeSingleLineValue(server.jenkinsPassword);
     if (jenkinsUrl.isEmpty) {
       showErrorToast('请输入 Jenkins 请求地址');
       return;
@@ -395,6 +397,30 @@ $gmallKey
     } catch (e) {
       return false;
     }
+  }
+
+  /// 统一清理单行输入，兼容 Windows 粘贴时夹带的回车换行。
+  String _normalizeSingleLineValue(String value) {
+    return value.replaceAll(RegExp(r'[\r\n]+'), '').trim();
+  }
+
+  void _normalizeLoginInputs() {
+    gmallUrlController.text =
+        _normalizeSingleLineValue(gmallUrlController.text);
+    gmallKeyController.text =
+        _normalizeSingleLineValue(gmallKeyController.text);
+    userNameTextController.text =
+        _normalizeSingleLineValue(userNameTextController.text);
+    passwordTextController.text =
+        _normalizeSingleLineValue(passwordTextController.text);
+    jenkinsServerNameTextController.text =
+        _normalizeSingleLineValue(jenkinsServerNameTextController.text);
+    jenkinsUrlController.text =
+        _normalizeSingleLineValue(jenkinsUrlController.text);
+    jenkinsUserNameTextController.text =
+        _normalizeSingleLineValue(jenkinsUserNameTextController.text);
+    jenkinsPasswordTextController.text =
+        _normalizeSingleLineValue(jenkinsPasswordTextController.text);
   }
 }
 
