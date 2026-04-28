@@ -266,7 +266,12 @@ $gmallKey
       final loginConfigStr = sp.getString(environment.toString());
       final shared = await _loadSharedJenkinsSnapshot();
       if (loginConfigStr != null) {
-        final loginConfig = LoginConfig.fromJson(jsonDecode(loginConfigStr));
+        final loginConfig = LoginConfig.fromJson(
+          _decodeStoredJson(
+            loginConfigStr,
+            storageKey: environment.toString(),
+          ),
+        );
         gmallUrlController.text = loginConfig.environmentConfig.gmallUrl;
         gmallKeyController.text = loginConfig.environmentConfig.gmallKey;
         userNameTextController.text = loginConfig.gmallUsername;
@@ -328,6 +333,11 @@ $gmallKey
         jenkinsServers.clear();
         selectedJenkinsServerId.value = null;
       }
+    } on FormatException catch (e) {
+      final sp = await SharedPreferences.getInstance();
+      await _clearStoredConfig(sp, environment);
+      _resetLoginInputs();
+      showErrorToast('检测到本地配置已损坏，已自动清空，请重新填写配置。\n$e');
     } catch (e, stackTrace) {
       // 这里不要让 loading 卡死；同时给出可排查的错误信息
       print('初始化本地登录信息失败: $e');
@@ -357,7 +367,10 @@ $gmallKey
     final raw = sp.getString(_sharedJenkinsKey);
     if (raw == null) return _SharedJenkinsConfig.empty();
     try {
-      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final json = _decodeStoredJson(
+        raw,
+        storageKey: _sharedJenkinsKey,
+      );
       final rawServers = json['jenkinsServers'];
       List<JenkinsServerConfig> servers = [];
       if (rawServers is List) {
@@ -376,9 +389,66 @@ $gmallKey
               : (servers.isNotEmpty ? servers.first.id : null);
       return _SharedJenkinsConfig(
           servers: servers, selectedId: normalizedSelected);
+    } on FormatException {
+      await sp.remove(_sharedJenkinsKey);
+      return _SharedJenkinsConfig.empty();
     } catch (_) {
+      await sp.remove(_sharedJenkinsKey);
       return _SharedJenkinsConfig.empty();
     }
+  }
+
+  Future<void> _clearStoredConfig(
+    SharedPreferences sp,
+    Environment environment,
+  ) async {
+    await sp.remove(environment.toString());
+    await sp.remove(_sharedJenkinsKey);
+  }
+
+  Map<String, dynamic> _decodeStoredJson(
+    String raw, {
+    required String storageKey,
+  }) {
+    final sanitized = _sanitizeStoredJson(raw);
+    try {
+      final decoded = jsonDecode(sanitized);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+      throw const FormatException('本地配置格式不正确，不是对象类型');
+    } catch (e) {
+      throw FormatException('本地配置解析失败（$storageKey）: $e');
+    }
+  }
+
+  String _sanitizeStoredJson(String raw) {
+    var value = raw.trim();
+    if (value.isNotEmpty && value.codeUnitAt(0) == 0xFEFF) {
+      value = value.substring(1);
+    }
+
+    final objectStart = value.indexOf('{');
+    if (objectStart > 0) {
+      value = value.substring(objectStart);
+    }
+    return value;
+  }
+
+  void _resetLoginInputs() {
+    gmallKeyController.clear();
+    gmallUrlController.clear();
+    jenkinsUrlController.clear();
+    userNameTextController.clear();
+    passwordTextController.clear();
+    jenkinsUserNameTextController.clear();
+    jenkinsPasswordTextController.clear();
+    jenkinsServerNameTextController.clear();
+    jenkinsServers.clear();
+    selectedJenkinsServerId.value = null;
   }
 
   /// 对外暴露：使用当前内存中的 Jenkins 配置写入共享存储
