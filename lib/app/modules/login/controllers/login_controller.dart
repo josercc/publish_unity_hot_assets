@@ -165,7 +165,7 @@ class LoginController extends GetxController {
       return;
     }
     // 把当前输入同步回选中服务器（避免用户改了字段但没保存）
-    upsertSelectedServerFromInputs();
+    // upsertSelectedServerFromInputs();
     final server = selectedServer;
     if (server == null) {
       showErrorToast('请先配置服务器');

@@ -1,7 +1,7 @@
 name: publish_unity_hot_assets
 description: "A new Flutter project."
 publish_to: "none"
-version: 2.3.4
+version: 2.3.5
 
 environment:
   sdk: ^3.5.4
@@ -32,3 +32,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  fonts:
+    - family: Barlow
+      fonts:
+        - asset: assets/fonts/Barlow/Barlow-Bold.ttf

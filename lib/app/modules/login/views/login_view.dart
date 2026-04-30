@@ -78,7 +78,8 @@ class LoginView extends GetView<LoginController> {
                                 ? const Text('未配置服务器，请先配置服务器')
                                 : DropdownButton<String>(
                                     isExpanded: true,
-                                    value: controller.selectedJenkinsServerId.value,
+                                    value: controller
+                                        .selectedJenkinsServerId.value,
                                     items: controller.jenkinsServers
                                         .map(
                                           (e) => DropdownMenuItem(
@@ -110,7 +111,7 @@ class LoginView extends GetView<LoginController> {
 
                       await controller.login();
                       SmartDialog.dismiss();
-                    } catch (e) {
+                    } catch (e, stackTrace) {
                       SmartDialog.dismiss();
                       if (e is DioException) {
                         // 显示包含URL信息的错误
@@ -119,7 +120,10 @@ class LoginView extends GetView<LoginController> {
                             e.toString();
                         showErrorToast(errorMessage);
                       } else {
-                        showErrorToast(e.toString());
+                        showErrorToast('''
+${e.toString()}
+${stackTrace.toString()}
+''');
                       }
                     }
                   },

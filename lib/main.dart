@@ -15,6 +15,18 @@ void main() {
       initialRoute: Routes.LOGIN,
       getPages: AppPages.routes,
       builder: FlutterSmartDialog.init(),
+      theme: ThemeData(
+        fontFamily: 'Barlow',
+        textTheme: ThemeData.light().textTheme.apply(fontFamily: 'Barlow'),
+        inputDecorationTheme: const InputDecorationTheme(
+          hintStyle: TextStyle(fontFamily: 'Barlow'),
+          labelStyle: TextStyle(fontFamily: 'Barlow'),
+          helperStyle: TextStyle(fontFamily: 'Barlow'),
+        ),
+        snackBarTheme: const SnackBarThemeData(
+          contentTextStyle: TextStyle(fontFamily: 'Barlow'),
+        ),
+      ),
     ),
   );
 
