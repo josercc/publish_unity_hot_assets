@@ -23,6 +23,26 @@ class JenkinsApi {
     return 'Basic ${base64Encode(authBytes)}';
   }
 
+  /// 将 UI/业务平台名映射为 Jenkins 构建参数
+  /// HarmonyOS 对应 Jenkins 参数 ohos
+  String normalizeJenkinsPlatform(String platform) {
+    final lower = platform.toLowerCase();
+    if (lower == 'harmonyos') {
+      return 'ohos';
+    }
+    return lower;
+  }
+
+  /// 将 UI/业务平台名映射为 Jenkins 产物目录名
+  /// HarmonyOS 产物目录为 Harmony
+  String jenkinsArtifactPlatformDir(String platform) {
+    final lower = platform.toLowerCase();
+    if (lower == 'harmonyos' || lower == 'ohos') {
+      return 'Harmony';
+    }
+    return platform.toUpperCase();
+  }
+
   /// 验证登录
   Future<bool> verifyLogin() async {
     final url = '$jenkinsUrl/user/$jenkinsUserName/api/json?pretty=true';
@@ -68,11 +88,12 @@ class JenkinsApi {
     required int buildNumber,
     void Function(int, int)? onReceiveProgress,
   }) async {
+    final artifactDir = jenkinsArtifactPlatformDir(platform);
     // 构建下载路径：使用新路径结构
     final zipUrl =
-        "$jenkinsUrl/job/build_unity_hot_asset/ws/HotUpdate/$buildNumber/${platform.toUpperCase()}/UploadAssets/*zip*/UploadAssets.zip";
+        "$jenkinsUrl/job/build_unity_hot_asset/ws/HotUpdate/$buildNumber/$artifactDir/UploadAssets/*zip*/UploadAssets.zip";
     print('Jenkins下载资源 - 请求路径: $zipUrl');
-    print('Jenkins下载资源 - 平台: $platform');
+    print('Jenkins下载资源 - 平台: $platform -> $artifactDir');
     print('Jenkins下载资源 - 构建配置: $buildConfiguration');
     print('Jenkins下载资源 - 构建号: $buildNumber');
     print('Jenkins下载资源 - 本地保存路径: $zipPath');
@@ -183,16 +204,17 @@ class JenkinsApi {
     final uid = DateTime.now().millisecondsSinceEpoch.toString();
     print('Jenkins开启打包 - 生成UID: $uid');
 
+    final jenkinsPlatform = normalizeJenkinsPlatform(platform);
     final url = '$jenkinsUrl/job/build_unity_hot_asset/buildWithParameters';
     final queryParams = {
-      'platform': platform.toLowerCase(),
+      'platform': jenkinsPlatform,
       'build_type': buildConfiguration,
       'branch': branch,
       'UID': uid, // 添加 UID 参数
     };
 
     print('Jenkins开启打包 - 请求路径: $url');
-    print('Jenkins开启打包 - 平台: $platform');
+    print('Jenkins开启打包 - 平台: $platform -> $jenkinsPlatform');
     print('Jenkins开启打包 - 构建配置: $buildConfiguration');
     print('Jenkins开启打包 - 分支: $branch');
     print('Jenkins开启打包 - UID: $uid');

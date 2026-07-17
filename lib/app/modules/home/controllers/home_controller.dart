@@ -20,7 +20,7 @@ import 'package:crypto/crypto.dart' as crypto;
 
 class HomeController extends GetxController {
   /// 支持的平台类型
-  List<String> platformList = ['iOS', 'Android'];
+  List<String> platformList = ['iOS', 'Android', 'HarmonyOS'];
 
   /// 当前选中的平台
   final curPlatform = 'iOS'.obs;
@@ -60,6 +60,9 @@ class HomeController extends GetxController {
 
   /// 本地资源路径地址
   TextEditingController localResourcePathController = TextEditingController();
+
+  /// 跳过构建时填写的 Jenkins 构建号
+  TextEditingController buildIdController = TextEditingController();
 
   /// 当前进行的任务列表
   final taskList = <Task>[].obs;
@@ -146,6 +149,7 @@ class HomeController extends GetxController {
     maxVersionController.dispose();
     unityBranchController.dispose();
     localResourcePathController.dispose();
+    buildIdController.dispose();
     super.onClose();
   }
 
@@ -473,12 +477,16 @@ class HomeController extends GetxController {
       }
       buildNumber = packTask.buildNumber!;
     } else {
-      // 如果跳过构建，获取最后一个构建号
-      final jenkinsApi = global.jenkinsApi;
-      if (jenkinsApi == null) {
-        throw Exception('Jenkins API 未初始化');
+      // 跳过构建时，使用手动填写的构建号下载
+      final buildIdText = buildIdController.text.trim();
+      if (buildIdText.isEmpty) {
+        throw const ToastException('跳过构建时请填写构建ID');
       }
-      buildNumber = await jenkinsApi.getLastBuildNumber();
+      final parsedBuildNumber = int.tryParse(buildIdText);
+      if (parsedBuildNumber == null || parsedBuildNumber <= 0) {
+        throw const ToastException('构建ID必须是有效的正整数');
+      }
+      buildNumber = parsedBuildNumber;
     }
 
     /// 下载资源

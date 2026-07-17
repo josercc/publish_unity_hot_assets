@@ -163,6 +163,16 @@ class HomeView extends GetView<HomeController> {
                     ),
                   ),
 
+                  if (controller.isSkipBuild.value)
+                    ListTile(
+                      title: _buildTitle('构建ID'),
+                      subtitle: CupertinoTextField(
+                        placeholder: '请输入Jenkins构建ID，用于下载对应产物',
+                        controller: controller.buildIdController,
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+
                   /// 是否跳过下载
                   ListTile(
                     title: const Text('是否跳过下载（针对于不需要下载的情况）'),
