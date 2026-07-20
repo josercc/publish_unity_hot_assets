@@ -1,46 +1,57 @@
-build-windows:
-  runs-on: windows-latest
-  steps:
-    - name: Checkout source
-      uses: actions/checkout@v4
+name: Build App
 
-    - name: Setup Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: ${{ env.FLUTTER_VERSION }}
-        channel: stable
-        architecture: x64
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
 
-    - name: Cache pub packages
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.pub-cache
-          ${{ github.workspace }}/build
-        key: flutter-pub-${{ hashFiles('pubspec.yaml') }}
+env:
+  FLUTTER_VERSION: "3.24.5"
 
-    - name: Install dependencies
-      run: flutter pub get
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-    - name: Enable Windows desktop support
-      run: flutter config --enable-windows-desktop
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          architecture: x64
 
-    # 关键修复：指定VS2022生成器，解决找不到VS2019报错
-    - name: Build Windows Release (VS2022)
-      run: |
-        flutter config --windows-generator "Visual Studio 17 2022"
-        flutter build windows --release
+      - name: Cache pub packages
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ github.workspace }}/build
+          key: flutter-pub-${{ hashFiles('pubspec.yaml') }}
 
-    - name: Zip Windows Artifact
-      uses: thedoctor0/zip-release@master
-      with:
-        type: zip
-        filename: FlutterApp-${{ github.ref_name }}-windows.zip
-        directory: build/windows/x64/runner/Release
-        output-path: ./dist
+      - name: Install dependencies
+        run: flutter pub get
 
-    - name: Upload Windows zip
-      uses: actions/upload-artifact@v4
-      with:
-        name: windows-zip
-        path: ./dist/FlutterApp-${{ github.ref_name }}-windows.zip
+      - name: Enable Windows desktop support
+        run: flutter config --enable-windows-desktop
+
+      # 关键修复：指定VS2022生成器，解决找不到VS2019报错
+      - name: Build Windows Release (VS2022)
+        run: |
+          flutter config --windows-generator "Visual Studio 17 2022"
+          flutter build windows --release
+
+      - name: Zip Windows Artifact
+        uses: thedoctor0/zip-release@master
+        with:
+          type: zip
+          filename: FlutterApp-${{ github.ref_name }}-windows.zip
+          directory: build/windows/x64/runner/Release
+          output-path: ./dist
+
+      - name: Upload Windows zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: ./dist/FlutterApp-${{ github.ref_name }}-windows.zip
