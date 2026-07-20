@@ -7,7 +7,8 @@ on:
 
 jobs:
   build-and-release-windows:
-    runs-on: windows-latest
+    # windows-latest 已切到 VS2026，Flutter 3.35.7 仍会按 VS2019 生成工程而失败
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +21,8 @@ jobs:
         run: flutter pub get
       - name: Enable windows build
         run: flutter config --enable-windows-desktop
-      # 指定 VS2022 生成器，避免找不到 VS2019
       - name: Build artifacts
-        run: |
-          flutter config --windows-generator "Visual Studio 17 2022"
-          flutter build windows --release
+        run: flutter build windows --release
       - name: Archive Release
         uses: thedoctor0/zip-release@master
         with:
