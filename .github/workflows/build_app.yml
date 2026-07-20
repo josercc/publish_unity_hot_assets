@@ -1,57 +1,70 @@
-name: Build App
+name: Flutter CI
 
 on:
   push:
-    branches: [main, master]
-  workflow_dispatch:
-
-env:
-  FLUTTER_VERSION: "3.24.5"
+    tags:
+      - '*'
 
 jobs:
-  build-windows:
+  build-and-release-windows:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
+          channel: 'stable'
           architecture: x64
-
-      - name: Cache pub packages
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.pub-cache
-            ${{ github.workspace }}/build
-          key: flutter-pub-${{ hashFiles('pubspec.yaml') }}
-
-      - name: Install dependencies
+          flutter-version: '3.35.7'
+      - name: Install project dependencies
         run: flutter pub get
-
-      - name: Enable Windows desktop support
+      - name: Enable windows build
         run: flutter config --enable-windows-desktop
-
-      # 关键修复：指定VS2022生成器，解决找不到VS2019报错
-      - name: Build Windows Release (VS2022)
+      # 指定 VS2022 生成器，避免找不到 VS2019
+      - name: Build artifacts
         run: |
           flutter config --windows-generator "Visual Studio 17 2022"
           flutter build windows --release
-
-      - name: Zip Windows Artifact
+      - name: Archive Release
         uses: thedoctor0/zip-release@master
         with:
-          type: zip
+          type: 'zip'
           filename: FlutterApp-${{ github.ref_name }}-windows.zip
           directory: build/windows/x64/runner/Release
-          output-path: ./dist
-
-      - name: Upload Windows zip
-        uses: actions/upload-artifact@v4
+      - name: Windows Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
-          name: windows-zip
-          path: ./dist/FlutterApp-${{ github.ref_name }}-windows.zip
+          files: build/windows/x64/runner/Release/FlutterApp-${{ github.ref_name }}-windows.zip
+
+  build-and-release-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          architecture: x64
+          flutter-version: '3.35.7'
+      - name: Install project dependencies
+        run: flutter pub get
+      - name: Enable macOS build
+        run: flutter config --enable-macos-desktop
+      - name: Build artifacts
+        run: flutter build macos --release
+      - name: Archive Release
+        uses: thedoctor0/zip-release@master
+        with:
+          type: 'zip'
+          filename: FlutterApp-${{ github.ref_name }}-macos.zip
+          directory: build/macos/Build/Products/Release
+      - name: macOS Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        with:
+          files: build/macos/Build/Products/Release/FlutterApp-${{ github.ref_name }}-macos.zip
