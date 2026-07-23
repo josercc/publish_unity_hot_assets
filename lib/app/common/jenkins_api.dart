@@ -23,6 +23,61 @@ class JenkinsApi {
     return 'Basic ${base64Encode(authBytes)}';
   }
 
+  /// 获取 Jenkins CSRF crumb（开启 CSRF 防护时 POST 必须带上）
+  /// DefaultCrumbIssuer 会把 crumb 绑定到会话，因此必须同时带回 Set-Cookie。
+  /// 未开启 CSRF 或接口不可用时返回空 Map，不影响旧 Jenkins。
+  Future<Map<String, String>> getCrumbHeaders() async {
+    final url = '$jenkinsUrl/crumbIssuer/api/json';
+    try {
+      final res = await global.dio.get(
+        url,
+        options: Options(
+          headers: {
+            'Authorization': getAuthHeader(),
+          },
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      if (res.statusCode != 200) {
+        print('Jenkins获取Crumb跳过 - HTTP状态码: ${res.statusCode}');
+        return {};
+      }
+      final crumbRequestField =
+          JSON(res.data)['crumbRequestField'].stringValue;
+      final crumb = JSON(res.data)['crumb'].stringValue;
+      if (crumbRequestField.isEmpty || crumb.isEmpty) {
+        print('Jenkins获取Crumb跳过 - 响应缺少 crumb 字段');
+        return {};
+      }
+
+      final headers = <String, String>{
+        crumbRequestField: crumb,
+      };
+
+      // 把 crumb 请求返回的会话 Cookie 一并带回，否则仍会 403
+      final setCookies = res.headers.map['set-cookie'] ??
+          res.headers.map['Set-Cookie'] ??
+          const <String>[];
+      final cookiePairs = <String>[];
+      for (final raw in setCookies) {
+        final pair = raw.split(';').first.trim();
+        if (pair.isNotEmpty) {
+          cookiePairs.add(pair);
+        }
+      }
+      if (cookiePairs.isNotEmpty) {
+        headers['Cookie'] = cookiePairs.join('; ');
+        print('Jenkins获取Crumb成功 - 字段: $crumbRequestField, Cookie数: ${cookiePairs.length}');
+      } else {
+        print('Jenkins获取Crumb成功 - 字段: $crumbRequestField (无Set-Cookie)');
+      }
+      return headers;
+    } catch (e) {
+      print('Jenkins获取Crumb失败(将继续尝试无Crumb请求): $e');
+      return {};
+    }
+  }
+
   /// 将 UI/业务平台名映射为 Jenkins 构建参数
   /// HarmonyOS 对应 Jenkins 参数 ohos
   String normalizeJenkinsPlatform(String platform) {
@@ -220,6 +275,7 @@ class JenkinsApi {
     print('Jenkins开启打包 - UID: $uid');
     print('Jenkins开启打包 - 查询参数: $queryParams');
 
+    final crumbHeaders = await getCrumbHeaders();
     final res = await global.dio
         .post(
       url,
@@ -227,6 +283,7 @@ class JenkinsApi {
       options: Options(
         headers: {
           'Authorization': getAuthHeader(),
+          ...crumbHeaders,
         },
       ),
     )
@@ -239,8 +296,10 @@ class JenkinsApi {
       print('Jenkins开启打包失败 - 查询参数: $queryParams');
       print('Jenkins开启打包失败 - 错误信息: $e');
       if (e is DioException) {
+        final responseBody = e.response?.data?.toString() ?? '';
+        print('Jenkins开启打包失败 - 响应体: $responseBody');
         final errorMessage =
-            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\nUID: $uid\n查询参数: $queryParams\nHTTP状态码: ${e.response?.statusCode}\n错误: ${e.message ?? e.toString()}';
+            'Jenkins开启打包失败\n请求路径: $url\n平台: $platform\n构建配置: $buildConfiguration\n分支: $branch\nUID: $uid\n查询参数: $queryParams\nHTTP状态码: ${e.response?.statusCode}\n响应体: $responseBody\n错误: ${e.message ?? e.toString()}';
         throw DioException(
           requestOptions: e.requestOptions,
           response: e.response,
