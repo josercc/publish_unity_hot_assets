@@ -1,4 +1,4 @@
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:quickalert/quickalert.dart';
 
@@ -8,7 +8,7 @@ Widget _buildAlertMessage(String msg) {
     child: ConstrainedBox(
       constraints: const BoxConstraints(maxHeight: 260),
       child: SingleChildScrollView(
-        child: Text(
+        child: SelectableText(
           msg,
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
@@ -18,6 +18,8 @@ Widget _buildAlertMessage(String msg) {
 }
 
 void showErrorToast(String msg) {
+  // ignore: avoid_print
+  print('[Error] $msg');
   QuickAlert.show(
     context: Get.context!,
     type: QuickAlertType.error,

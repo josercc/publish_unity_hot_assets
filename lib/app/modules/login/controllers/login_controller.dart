@@ -1,29 +1,32 @@
 import 'dart:convert';
 
-import 'package:darty_json_safe/darty_json_safe.dart';
+import 'package:appwrite/appwrite.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
+import 'package:publish_unity_hot_assets/app/common/appwrite/appwrite_auth_service.dart';
+import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_service.dart';
+import 'package:publish_unity_hot_assets/app/common/business_session_bootstrap.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/functions.dart';
-import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
-import 'package:publish_unity_hot_assets/app/common/jenkins_api.dart';
-import 'package:publish_unity_hot_assets/app/common/r_s_a_encryptor.dart';
+import 'package:publish_unity_hot_assets/app/common/legacy_prefs_store.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginController extends GetxController {
-  static const String _sharedJenkinsKey = 'shared_jenkins_servers';
+  static const String _sharedJenkinsKey =
+      BusinessSessionBootstrap.sharedJenkinsKey;
+
   final userNameTextController = TextEditingController();
   final passwordTextController = TextEditingController();
   final jenkinsUserNameTextController = TextEditingController();
   final jenkinsPasswordTextController = TextEditingController();
   final jenkinsServerNameTextController = TextEditingController();
 
-  /// Gmall 请求地址
+  /// Gmall 请求地址（服务器配置页使用，登录页不再展示）
   TextEditingController gmallUrlController = TextEditingController();
 
-  /// Gmall 密钥
+  /// Gmall 密钥（服务器配置页使用，登录页不再展示）
   TextEditingController gmallKeyController = TextEditingController();
 
   /// Jenkins 请求地址
@@ -41,7 +44,28 @@ class LoginController extends GetxController {
   @override
   void onInit() {
     super.onInit();
+    _loadSavedAppwriteCredentials();
     initLocalLoginInfo(curEnv.value);
+  }
+
+  @override
+  void onClose() {
+    userNameTextController.dispose();
+    passwordTextController.dispose();
+    jenkinsUserNameTextController.dispose();
+    jenkinsPasswordTextController.dispose();
+    jenkinsServerNameTextController.dispose();
+    gmallUrlController.dispose();
+    gmallKeyController.dispose();
+    jenkinsUrlController.dispose();
+    super.onClose();
+  }
+
+  Future<void> _loadSavedAppwriteCredentials() async {
+    final saved = await appwriteAuth.credentialStore.load();
+    if (saved == null) return;
+    userNameTextController.text = saved.username;
+    passwordTextController.text = saved.password;
   }
 
   switchEnv(Environment env) {
@@ -121,149 +145,144 @@ class LoginController extends GetxController {
     selectServer(id);
   }
 
-//   // RSA公钥（PEM格式）
-//   final String publicKeyPem = '''
-// -----BEGIN PUBLIC KEY-----
-// MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCZekIVXO6fY/4Ds/V3G9k/A/wBnSLdZNrhVh7QrLLMyMoJcQSRJP3SxIvQ7zm/1hTb5YXHTDgi6SWbK/293taX0liqtVZP5cJQ4bYQVTMoxn6wFrqgb+DVRuRUqnIlgXos1HZbYonQ5fNexuSzGaBw2yTJDbhNg5ZeXy0YUU3SaQIDAQAB
-// -----END PUBLIC KEY-----
-// ''';
-
-  login() async {
+  /// Appwrite 登录；成功后查询激活的打包服务器，有则进入首页。
+  Future<void> login() async {
     _normalizeLoginInputs();
 
-    final gmallUrl = _normalizeSingleLineValue(gmallUrlController.text);
-    final gmallKey = _normalizeSingleLineValue(gmallKeyController.text);
     final userName = _normalizeSingleLineValue(userNameTextController.text);
     final password = _normalizeSingleLineValue(passwordTextController.text);
-    if (gmallUrl.isEmpty) {
-      showErrorToast('请输入 Gmall 请求地址');
-      return;
-    }
-    // 验证URL格式
-    if (!_isValidUrl(gmallUrl)) {
-      showErrorToast('Gmall 请求地址格式不正确');
-      return;
-    }
-
-    if (gmallKey.isEmpty) {
-      showErrorToast('请输入 Gmall 密钥');
-      return;
-    }
 
     if (userName.isEmpty) {
-      showErrorToast('请输入 Gmall 用户名');
+      showErrorToast('请输入用户名');
       return;
     }
     if (password.isEmpty) {
-      showErrorToast('请输入 Gmall 密码');
+      showErrorToast('请输入密码');
       return;
     }
 
-    // Jenkins 多服务器：必须先配置服务器
-    if (jenkinsServers.isEmpty) {
-      showErrorToast('请先配置服务器');
-      return;
+    try {
+      await appwriteAuth.login(email: userName, password: password);
+    } on AppwriteException catch (e, stackTrace) {
+      // ignore: avoid_print
+      print('[Login] AppwriteException: ${e.message ?? e}\n$stackTrace');
+      rethrow;
+    } catch (e, stackTrace) {
+      // ignore: avoid_print
+      print('[Login] $e\n$stackTrace');
+      rethrow;
     }
-    // 把当前输入同步回选中服务器（避免用户改了字段但没保存）
-    // upsertSelectedServerFromInputs();
+
+    final activeServers = await packagingServers.fetchActiveServers();
+    if (activeServers.isEmpty) {
+      throw '当前无可用打包服务器';
+    }
+
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString(
+      BusinessSessionBootstrap.lastEnvironmentKey,
+      curEnv.value.toString(),
+    );
+
+    // 同步业务侧本地配置；Gmall 账号默认复用 Appwrite 登录账号
+    await _persistBusinessConfigSnapshot(
+      appwriteUsername: userName,
+      appwritePassword: password,
+    );
+    await BusinessSessionBootstrap.restore();
+
+    Get.offAllNamed(Routes.HOME);
+  }
+
+  Future<void> _persistBusinessConfigSnapshot({
+    required String appwriteUsername,
+    required String appwritePassword,
+  }) async {
+    final gmallUrl = _normalizeSingleLineValue(gmallUrlController.text);
+    final gmallKey = _normalizeSingleLineValue(gmallKeyController.text);
     final server = selectedServer;
-    if (server == null) {
-      showErrorToast('请先配置服务器');
+    final jenkinsUrl =
+        _normalizeSingleLineValue(server?.jenkinsUrl ?? jenkinsUrlController.text);
+    final jenkinsUserName = _normalizeSingleLineValue(
+        server?.jenkinsUsername ?? jenkinsUserNameTextController.text);
+    final jenkinsPassword = _normalizeSingleLineValue(
+        server?.jenkinsPassword ?? jenkinsPasswordTextController.text);
+
+    final sp = await SharedPreferences.getInstance();
+    await LegacyPrefsStore.migrateMissingKeys(sp);
+    final existingRaw =
+        await LegacyPrefsStore.getString(sp, curEnv.value.toString());
+    LoginConfig? existing;
+    if (existingRaw != null) {
+      try {
+        existing = LoginConfig.fromJson(
+          _decodeStoredJson(
+            existingRaw,
+            storageKey: curEnv.value.toString(),
+          ),
+        );
+      } catch (_) {}
+    }
+
+    final resolvedGmallUrl = gmallUrl.isNotEmpty
+        ? gmallUrl
+        : (existing?.environmentConfig.gmallUrl ?? '');
+    final resolvedGmallKey = gmallKey.isNotEmpty
+        ? gmallKey
+        : (existing?.environmentConfig.gmallKey ?? '');
+
+    // 没有任何业务配置时不覆盖写入
+    if (resolvedGmallUrl.isEmpty &&
+        resolvedGmallKey.isEmpty &&
+        jenkinsServers.isEmpty &&
+        jenkinsUrl.isEmpty &&
+        (existing == null)) {
       return;
     }
-    final jenkinsUrl = _normalizeSingleLineValue(server.jenkinsUrl);
-    final jenkinsUserName = _normalizeSingleLineValue(server.jenkinsUsername);
-    final jenkinsPassword = _normalizeSingleLineValue(server.jenkinsPassword);
-    if (jenkinsUrl.isEmpty) {
-      showErrorToast('请输入 Jenkins 请求地址');
-      return;
-    }
-    // 验证Jenkins URL格式
-    if (!_isValidUrl(jenkinsUrl)) {
-      showErrorToast('Jenkins 请求地址格式不正确');
-      return;
-    }
-    if (jenkinsUserName.isEmpty) {
-      showErrorToast('请输入 Jenkins 用户名');
-      return;
-    }
-    if (jenkinsPassword.isEmpty) {
-      showErrorToast('请输入 Jenkins 密码');
-      return;
-    }
+
+    final existingGmallUser = existing?.gmallUsername.trim() ?? '';
+    final existingGmallPass = existing?.gmallPassword ?? '';
 
     final loginConfig = LoginConfig(
       environmentConfig: EnvironmentConfig(
-        gmallUrl: gmallUrl,
-        gmallKey: gmallKey,
-        jenkinsUrl: jenkinsUrl,
+        gmallUrl: resolvedGmallUrl,
+        gmallKey: resolvedGmallKey,
+        jenkinsUrl: jenkinsUrl.isNotEmpty
+            ? jenkinsUrl
+            : (existing?.environmentConfig.jenkinsUrl ?? ''),
       ),
-      gmallUsername: userName,
-      gmallPassword: password,
+      gmallUsername:
+          existingGmallUser.isNotEmpty ? existingGmallUser : appwriteUsername,
+      gmallPassword:
+          existingGmallPass.isNotEmpty ? existingGmallPass : appwritePassword,
       jenkinsUsername: jenkinsUserName,
       jenkinsPassword: jenkinsPassword,
-      jenkinsServers: jenkinsServers.toList(),
-      selectedJenkinsServerId: selectedJenkinsServerId.value,
+      jenkinsServers: jenkinsServers.isNotEmpty
+          ? jenkinsServers.toList()
+          : (existing?.jenkinsServers ?? const []),
+      selectedJenkinsServerId:
+          selectedJenkinsServerId.value ?? existing?.selectedJenkinsServerId,
     );
-    SharedPreferences sp = await SharedPreferences.getInstance();
+
     await sp.setString(
       curEnv.value.toString(),
       jsonEncode(loginConfig.toJson()),
     );
     await _saveSharedJenkinsSnapshot(
-      servers: jenkinsServers.toList(),
-      selectedId: selectedJenkinsServerId.value,
+      servers: loginConfig.jenkinsServers,
+      selectedId: loginConfig.selectedJenkinsServerId,
     );
-
-    JenkinsApi jenkinsApi = JenkinsApi(
-      jenkinsUrl: jenkinsUrl,
-      jenkinsUserName: jenkinsUserName,
-      jenkinsPassword: jenkinsPassword,
-    );
-    global.jenkinsApi = jenkinsApi;
-
-    final publicKeyPem = '''
------BEGIN PUBLIC KEY-----
-$gmallKey
------END PUBLIC KEY-----
-''';
-
-    // 执行加密
-    final encryptedPassword = await encryptRSA(password, publicKeyPem);
-    global.gmallUrl = gmallUrl;
-    global.currentEnvironment = curEnv.value; // 设置当前环境
-    await loginGmall(userName, encryptedPassword);
-
-    bool isLogin = await jenkinsApi.verifyLogin();
-    if (!isLogin) {
-      throw 'Jenkins 账户登录失败';
-    }
-
-    Get.offAllNamed(Routes.HOME);
   }
 
-  /// 进行登录
-  Future<void> loginGmall(String gmallUserName, String gmallPassword) async {
-    final res = await global.postData(path: '/login/portalLogin', data: {
-      'username': gmallUserName,
-      'password': gmallPassword,
-    });
-    final token = JSON(res)['token'].string;
-    if (token == null) {
-      throw 'Gmall 账户登录失败\nURL: ${global.gmallUrl}/login/portalLogin';
-    }
-    // 使用setToken方法设置token和过期时间
-    global.setToken(token);
-  }
-
-  /// 初始化本地登录信息
+  /// 初始化本地登录信息（业务配置 + Jenkins）
   initLocalLoginInfo(Environment environment) async {
     SmartDialog.showLoading();
     try {
       final sp = await SharedPreferences.getInstance();
+      await LegacyPrefsStore.migrateMissingKeys(sp);
 
-      /// 从本地获取登录配置
-      final loginConfigStr = sp.getString(environment.toString());
+      final loginConfigStr =
+          await LegacyPrefsStore.getString(sp, environment.toString());
       final shared = await _loadSharedJenkinsSnapshot();
       if (loginConfigStr != null) {
         final loginConfig = LoginConfig.fromJson(
@@ -274,8 +293,6 @@ $gmallKey
         );
         gmallUrlController.text = loginConfig.environmentConfig.gmallUrl;
         gmallKeyController.text = loginConfig.environmentConfig.gmallKey;
-        userNameTextController.text = loginConfig.gmallUsername;
-        passwordTextController.text = loginConfig.gmallPassword;
 
         final envServers = loginConfig.jenkinsServers;
         final envSelected = loginConfig.selectedJenkinsServerId;
@@ -287,7 +304,6 @@ $gmallKey
         jenkinsServers.assignAll(useServers);
         selectedJenkinsServerId.value = useSelected;
 
-        // 迁移后立刻把选中服务器的字段回填到输入框
         final server = selectedServer ??
             (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
         if (server != null) {
@@ -297,7 +313,6 @@ $gmallKey
           jenkinsUserNameTextController.text = server.jenkinsUsername;
           jenkinsPasswordTextController.text = server.jenkinsPassword;
 
-          // 如果是迁移出来的配置，这里顺手写回新结构，避免下次还要走迁移逻辑
           final migrated = LoginConfig(
             environmentConfig: loginConfig.environmentConfig,
             gmallUsername: loginConfig.gmallUsername,
@@ -325,8 +340,6 @@ $gmallKey
         gmallKeyController.clear();
         gmallUrlController.clear();
         jenkinsUrlController.clear();
-        userNameTextController.clear();
-        passwordTextController.clear();
         jenkinsUserNameTextController.clear();
         jenkinsPasswordTextController.clear();
         jenkinsServerNameTextController.clear();
@@ -339,7 +352,6 @@ $gmallKey
       _resetLoginInputs();
       showErrorToast('检测到本地配置已损坏，已自动清空，请重新填写配置。\n$e');
     } catch (e, stackTrace) {
-      // 这里不要让 loading 卡死；同时给出可排查的错误信息
       print('初始化本地登录信息失败: $e');
       print(stackTrace);
       showErrorToast('读取本地配置失败，请重试或清理本地配置后再打开：$e');
@@ -348,7 +360,6 @@ $gmallKey
     }
   }
 
-  /// 仅存储共享的 Jenkins 配置（测试/生产共用）
   Future<void> _saveSharedJenkinsSnapshot({
     required List<JenkinsServerConfig> servers,
     required String? selectedId,
@@ -361,10 +372,9 @@ $gmallKey
     await sp.setString(_sharedJenkinsKey, jsonEncode(data));
   }
 
-  /// 读取共享 Jenkins 配置
   Future<_SharedJenkinsConfig> _loadSharedJenkinsSnapshot() async {
     final sp = await SharedPreferences.getInstance();
-    final raw = sp.getString(_sharedJenkinsKey);
+    final raw = await LegacyPrefsStore.getString(sp, _sharedJenkinsKey);
     if (raw == null) return _SharedJenkinsConfig.empty();
     try {
       final json = _decodeStoredJson(
@@ -442,8 +452,6 @@ $gmallKey
     gmallKeyController.clear();
     gmallUrlController.clear();
     jenkinsUrlController.clear();
-    userNameTextController.clear();
-    passwordTextController.clear();
     jenkinsUserNameTextController.clear();
     jenkinsPasswordTextController.clear();
     jenkinsServerNameTextController.clear();
@@ -451,7 +459,6 @@ $gmallKey
     selectedJenkinsServerId.value = null;
   }
 
-  /// 对外暴露：使用当前内存中的 Jenkins 配置写入共享存储
   Future<void> saveSharedJenkinsCurrent() async {
     await _saveSharedJenkinsSnapshot(
       servers: jenkinsServers.toList(),
@@ -459,38 +466,15 @@ $gmallKey
     );
   }
 
-  /// 验证URL格式
-  bool _isValidUrl(String url) {
-    try {
-      final uri = Uri.parse(url);
-      return uri.hasScheme && (uri.scheme == 'http' || uri.scheme == 'https');
-    } catch (e) {
-      return false;
-    }
-  }
-
-  /// 统一清理单行输入，兼容 Windows 粘贴时夹带的回车换行。
   String _normalizeSingleLineValue(String value) {
     return value.replaceAll(RegExp(r'[\r\n]+'), '').trim();
   }
 
   void _normalizeLoginInputs() {
-    gmallUrlController.text =
-        _normalizeSingleLineValue(gmallUrlController.text);
-    gmallKeyController.text =
-        _normalizeSingleLineValue(gmallKeyController.text);
     userNameTextController.text =
         _normalizeSingleLineValue(userNameTextController.text);
     passwordTextController.text =
         _normalizeSingleLineValue(passwordTextController.text);
-    jenkinsServerNameTextController.text =
-        _normalizeSingleLineValue(jenkinsServerNameTextController.text);
-    jenkinsUrlController.text =
-        _normalizeSingleLineValue(jenkinsUrlController.text);
-    jenkinsUserNameTextController.text =
-        _normalizeSingleLineValue(jenkinsUserNameTextController.text);
-    jenkinsPasswordTextController.text =
-        _normalizeSingleLineValue(jenkinsPasswordTextController.text);
   }
 }
 

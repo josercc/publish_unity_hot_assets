@@ -25,6 +25,9 @@ dependencies:
   shared_preferences: ^2.5.3
   flutter_archive: ^6.0.3
   package_info_plus: ^8.1.1
+  # 13.1.1 要求 Target.expired 为 bool；自建 Appwrite 常返回 null，导致 account.get() 崩溃
+  appwrite: 13.0.0
+  file_selector: ^1.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/functions.dart';
+import 'package:publish_unity_hot_assets/app/common/legacy_prefs_store.dart';
 import 'package:publish_unity_hot_assets/app/modules/login/controllers/login_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -61,8 +62,9 @@ class JenkinsServersController extends GetxController {
 
   Future<void> saveToLocal() async {
     final sp = await SharedPreferences.getInstance();
+    await LegacyPrefsStore.migrateMissingKeys(sp);
     final key = env.toString();
-    final raw = sp.getString(key);
+    final raw = await LegacyPrefsStore.getString(sp, key);
     if (raw == null) {
       // 允许只保存服务器配置：其它字段为空
       final cfg = LoginConfig(
