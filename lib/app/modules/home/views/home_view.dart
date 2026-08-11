@@ -150,6 +150,8 @@ class HomeView extends GetView<HomeController> {
                       selected: selectedId == row.server.id,
                       onTap: () =>
                           controller.togglePackagingServer(row.server.id),
+                      onOpenJenkins: () =>
+                          controller.openJenkinsInBrowser(row.server),
                     );
                   },
                 );
@@ -224,6 +226,7 @@ class _PackagingServerTile extends StatelessWidget {
   final JenkinsWorkloadStatus workload;
   final bool selected;
   final VoidCallback onTap;
+  final VoidCallback onOpenJenkins;
 
   const _PackagingServerTile({
     required this.name,
@@ -233,6 +236,7 @@ class _PackagingServerTile extends StatelessWidget {
     required this.workload,
     required this.selected,
     required this.onTap,
+    required this.onOpenJenkins,
   });
 
   Color get _workloadColor {
@@ -260,84 +264,98 @@ class _PackagingServerTile extends StatelessWidget {
     return Material(
       color: bg,
       borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected
-                  ? theme.colorScheme.primary
-                  : Colors.transparent,
-              width: 2,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? theme.colorScheme.primary
+                : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        padding: const EdgeInsets.only(left: 14, top: 4, bottom: 4, right: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(10),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: _workloadColor,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: _workloadColor.withValues(alpha: 0.45),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              host,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.hintColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (selected) ...[
+                        Icon(
+                          Icons.check_circle,
+                          size: 20,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      _StatusChip(
+                        label: online ? '在线' : '离线',
+                        color: online ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 6),
+                      _StatusChip(
+                        label: workload.label,
+                        color: _workloadColor,
+                      ),
+                      if (tag.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        _StatusChip(
+                          label: tag,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: _workloadColor,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: _workloadColor.withValues(alpha: 0.45),
-                      blurRadius: 6,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      host,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.hintColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (selected) ...[
-                Icon(
-                  Icons.check_circle,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-              ],
-              const SizedBox(width: 8),
-              _StatusChip(
-                label: online ? '在线' : '离线',
-                color: online ? Colors.green : Colors.grey,
-              ),
-              const SizedBox(width: 6),
-              _StatusChip(
-                label: workload.label,
-                color: _workloadColor,
-              ),
-              if (tag.isNotEmpty) ...[
-                const SizedBox(width: 6),
-                _StatusChip(
-                  label: tag,
-                  color: theme.colorScheme.primary,
-                ),
-              ],
-            ],
-          ),
+            IconButton(
+              tooltip: '打开 Jenkins（自动登录）',
+              onPressed: onOpenJenkins,
+              icon: const Icon(Icons.open_in_browser),
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ),
       ),
     );

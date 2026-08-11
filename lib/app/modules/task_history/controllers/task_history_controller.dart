@@ -2,12 +2,14 @@ import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_historical_task.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_service.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
 import 'package:publish_unity_hot_assets/app/modules/task_history/jenkins_task_history_args.dart';
 
 class TaskHistoryController extends GetxController {
   final tasks = <JenkinsHistoricalTask>[].obs;
   final isLoading = false.obs;
   final errorMessage = RxnString();
+  final cancellingTaskIds = <String>{}.obs;
 
   final _paramsService = JenkinsJobParamsService();
 
@@ -71,5 +73,42 @@ class TaskHistoryController extends GetxController {
   /// 把该任务参数带回任务页表单。
   void retryTask(JenkinsHistoricalTask task) {
     Get.back(result: Map<String, String>.from(task.parameters));
+  }
+
+  /// 取消排队中或打包中的任务。
+  Future<void> cancelTask(JenkinsHistoricalTask task) async {
+    final srv = server;
+    if (srv == null) {
+      Get.snackbar('无法取消', '未指定打包机');
+      return;
+    }
+    if (task.status != JenkinsJobRunStatus.waiting &&
+        task.status != JenkinsJobRunStatus.building) {
+      return;
+    }
+    if (cancellingTaskIds.contains(task.id)) return;
+
+    cancellingTaskIds.add(task.id);
+    cancellingTaskIds.refresh();
+    try {
+      await _paramsService.cancelJobRun(
+        server: srv,
+        jobName: task.jobName,
+        queueId: task.queueId,
+        buildNumber: task.buildNumber,
+      );
+      Get.snackbar(
+        '已取消',
+        task.buildNumber != null
+            ? '已请求停止构建 #${task.buildNumber}'
+            : '已请求取消队列 #${task.queueId}',
+      );
+      await loadHistory();
+    } catch (e) {
+      Get.snackbar('取消失败', e.toString());
+    } finally {
+      cancellingTaskIds.remove(task.id);
+      cancellingTaskIds.refresh();
+    }
   }
 }

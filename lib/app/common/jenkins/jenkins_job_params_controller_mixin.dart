@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_service.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_duplicate_confirm.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_historical_task.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_parameter.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_service.dart';
@@ -394,12 +395,18 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
       );
       if (duplicates.isNotEmpty) {
         final tip = duplicates.map((e) => e.userMessage).join('\n');
-        jobRunStatus.value = JenkinsJobRunStatus.idle;
-        jobRunMessage.value = tip;
         // ignore: avoid_print
-        print('[JobParams] duplicate blocked: $tip');
-        Get.snackbar('提示', tip);
-        return;
+        print('[JobParams] duplicate found, ask continue: $tip');
+        jobRunMessage.value = '发现相同配置任务，等待确认...';
+        final continueSubmit =
+            await confirmContinueDespiteDuplicateJobs(duplicates);
+        if (!continueSubmit) {
+          jobRunStatus.value = JenkinsJobRunStatus.idle;
+          jobRunMessage.value = '已取消提交（存在相同配置任务）';
+          // ignore: avoid_print
+          print('[JobParams] duplicate declined: $tip');
+          return;
+        }
       }
 
       jobRunMessage.value = '正在提交构建...';
@@ -522,6 +529,58 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
     _runPollTimer?.cancel();
     _runPollTimer = null;
     _runPollSeq++;
+  }
+
+  final isCancellingJobRun = false.obs;
+
+  /// 取消当前排队中 / 打包中的 Jenkins 任务。
+  Future<void> cancelJenkinsJob() async {
+    final status = jobRunStatus.value;
+    if (status != JenkinsJobRunStatus.waiting &&
+        status != JenkinsJobRunStatus.building &&
+        status != JenkinsJobRunStatus.submitting) {
+      return;
+    }
+    if (isCancellingJobRun.value) return;
+
+    final server = _selectedServer;
+    final queueId = jobRunQueueId.value;
+    final buildNumber = jobRunBuildNumber.value;
+
+    // 尚未拿到队列/构建号：只停止本地轮询
+    if (server == null || (queueId == null && buildNumber == null)) {
+      stopJobRunPolling();
+      jobRunStatus.value = JenkinsJobRunStatus.aborted;
+      jobRunMessage.value = '已取消提交';
+      await _syncActiveHistory();
+      return;
+    }
+
+    isCancellingJobRun.value = true;
+    try {
+      jobRunMessage.value = buildNumber != null
+          ? '正在停止构建 #$buildNumber...'
+          : '正在取消队列 #$queueId...';
+      await _paramsService.cancelJobRun(
+        server: server,
+        jobName: jenkinsJobName,
+        queueId: queueId,
+        buildNumber: buildNumber,
+      );
+      stopJobRunPolling();
+      jobRunStatus.value = JenkinsJobRunStatus.aborted;
+      jobRunMessage.value = buildNumber != null
+          ? '已停止构建 #$buildNumber'
+          : '已取消队列 #$queueId';
+      await _syncActiveHistory();
+      Get.snackbar('已取消', jobRunMessage.value);
+    } catch (e) {
+      Get.snackbar('取消失败', e.toString());
+      // 失败后继续轮询真实状态
+      await _pollJobRunOnce();
+    } finally {
+      isCancellingJobRun.value = false;
+    }
   }
 
   /// 是否已有打包机，可打开 Jenkins 工作空间。

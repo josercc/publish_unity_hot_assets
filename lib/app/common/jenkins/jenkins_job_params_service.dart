@@ -700,6 +700,165 @@ println JsonOutput.toJson(list)
     return JenkinsTriggeredBuild(queueId: queueId);
   }
 
+  /// 取消排队中的任务，或停止正在打包的构建。
+  ///
+  /// 优先用 [buildNumber] 调 `/stop`；否则用 [queueId] 调 `/queue/cancelItem`。
+  Future<void> cancelJobRun({
+    required PackagingServer server,
+    required String jobName,
+    int? queueId,
+    int? buildNumber,
+  }) async {
+    if (buildNumber != null) {
+      await _stopBuild(
+        server: server,
+        jobName: jobName,
+        buildNumber: buildNumber,
+      );
+      return;
+    }
+    if (queueId != null) {
+      await _cancelQueueItem(server: server, queueId: queueId);
+      return;
+    }
+    throw StateError('缺少队列号或构建号，无法取消任务');
+  }
+
+  /// `POST /queue/cancelItem?id=`
+  Future<void> _cancelQueueItem({
+    required PackagingServer server,
+    required int queueId,
+  }) async {
+    final topic = _requireTopic(server);
+    final jenkinsBase = _localJenkinsBase(server.url);
+    final auth = _basicAuth(server.userName, server.password);
+    final headers = <String, String>{
+      if (auth != null) 'Authorization': auth,
+    };
+
+    final crumbHeaders = await _fetchCrumbHeaders(
+      topic: topic,
+      jenkinsBase: jenkinsBase,
+      headers: headers,
+      required: true,
+    );
+
+    Future<NtfyProxyResponse> postCancel(Map<String, String> crumbs) {
+      return _client.proxyHttp(
+        topic: topic,
+        method: 'POST',
+        url: '$jenkinsBase/queue/cancelItem',
+        headers: {
+          ...headers,
+          ...crumbs,
+        },
+        params: {'id': '$queueId'},
+        timeout: const Duration(seconds: 90),
+      );
+    }
+
+    var res = await postCancel(crumbHeaders);
+    if (res.statusCode == 403) {
+      _invalidateCrumb(topic, jenkinsBase);
+      final fresh = await _fetchCrumbHeaders(
+        topic: topic,
+        jenkinsBase: jenkinsBase,
+        headers: headers,
+        required: true,
+      );
+      res = await postCancel(fresh);
+    }
+
+    _ensureCancelOk(
+      action: '取消队列 #$queueId',
+      res: res,
+    );
+    // ignore: avoid_print
+    print('[JobParams] cancelled queue item #$queueId');
+  }
+
+  /// `POST /job/{job}/{number}/stop`
+  Future<void> _stopBuild({
+    required PackagingServer server,
+    required String jobName,
+    required int buildNumber,
+  }) async {
+    final topic = _requireTopic(server);
+    final jenkinsBase = _localJenkinsBase(server.url);
+    final encodedJob = Uri.encodeComponent(jobName);
+    final auth = _basicAuth(server.userName, server.password);
+    final headers = <String, String>{
+      if (auth != null) 'Authorization': auth,
+    };
+
+    final crumbHeaders = await _fetchCrumbHeaders(
+      topic: topic,
+      jenkinsBase: jenkinsBase,
+      headers: headers,
+      required: true,
+    );
+
+    Future<NtfyProxyResponse> postStop(Map<String, String> crumbs) {
+      return _client.proxyHttp(
+        topic: topic,
+        method: 'POST',
+        url: '$jenkinsBase/job/$encodedJob/$buildNumber/stop',
+        headers: {
+          ...headers,
+          ...crumbs,
+        },
+        timeout: const Duration(seconds: 90),
+      );
+    }
+
+    var res = await postStop(crumbHeaders);
+    if (res.statusCode == 403) {
+      _invalidateCrumb(topic, jenkinsBase);
+      final fresh = await _fetchCrumbHeaders(
+        topic: topic,
+        jenkinsBase: jenkinsBase,
+        headers: headers,
+        required: true,
+      );
+      res = await postStop(fresh);
+    }
+
+    _ensureCancelOk(
+      action: '停止构建 #$buildNumber',
+      res: res,
+    );
+    // ignore: avoid_print
+    print('[JobParams] stopped build #$buildNumber job=$jobName');
+  }
+
+  void _ensureCancelOk({
+    required String action,
+    required NtfyProxyResponse res,
+  }) {
+    final code = res.statusCode ?? 0;
+    final okStatus = code == 200 ||
+        code == 201 ||
+        code == 204 ||
+        code == 302 ||
+        code == 303 ||
+        code == 307 ||
+        code == 308;
+    if (!res.ok || !okStatus) {
+      throw StateError(
+        '$action 失败 status=$code error=${res.error} '
+        'body=${_bodyPreview(res.body)}',
+      );
+    }
+  }
+
+  String _requireTopic(PackagingServer server) {
+    final topic = server.ntfyTopic;
+    if (topic == null || topic.isEmpty) {
+      throw StateError('无法从打包机 URL 解析 ntfy topic: ${server.url}');
+    }
+    return topic;
+  }
+
   /// 查询队列项 / 构建状态。
   Future<JenkinsJobRunSnapshot> queryRunStatus({
     required String jobName,
@@ -1188,6 +1347,8 @@ println JsonOutput.toJson(list)
   }
 
   /// 拉取 Jenkins Job 的构建历史（含参数，供任务列表 / 重试）。
+  ///
+  /// 排队中的项排在最前（状态 [JenkinsJobRunStatus.waiting]）。
   Future<List<JenkinsHistoricalTask>> fetchJobBuildHistory({
     required String jobName,
     required PackagingServer server,
@@ -1204,6 +1365,33 @@ println JsonOutput.toJson(list)
     };
     final encodedJob = Uri.encodeComponent(jobName);
     final lookback = limit < 1 ? 1 : limit;
+    final now = DateTime.now();
+
+    final out = <JenkinsHistoricalTask>[];
+
+    // 排队中的任务（尚无构建号）
+    final queued = await _fetchQueuedJobsWithParams(
+      topic: topic,
+      jenkinsBase: jenkinsBase,
+      headers: headers,
+      jobName: jobName,
+    );
+    for (final item in queued) {
+      out.add(
+        JenkinsHistoricalTask(
+          id: '${server.id}_${jobName}_queue_${item.queueId}',
+          jobName: jobName,
+          serverName: server.displayName,
+          serverTag: server.tag,
+          parameters: item.parameters,
+          status: JenkinsJobRunStatus.waiting,
+          message: '等待中 · 队列 #${item.queueId}',
+          queueId: item.queueId,
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
 
     final res = await _client.proxyHttp(
       topic: topic,
@@ -1225,9 +1413,8 @@ println JsonOutput.toJson(list)
 
     final body = _asMap(res.body);
     final builds = body['builds'];
-    if (builds is! List || builds.isEmpty) return const [];
+    if (builds is! List || builds.isEmpty) return out;
 
-    final out = <JenkinsHistoricalTask>[];
     for (final item in builds) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
@@ -1254,7 +1441,11 @@ println JsonOutput.toJson(list)
           serverTag: server.tag,
           parameters: params,
           status: status,
-          message: _messageForBuildStatus(status, buildNumber, map['result']?.toString()),
+          message: _messageForBuildStatus(
+            status,
+            buildNumber,
+            map['result']?.toString(),
+          ),
           buildNumber: buildNumber,
           createdAt: when,
           updatedAt: when,
@@ -1446,9 +1637,22 @@ class JenkinsDuplicateActiveJob {
     return status.label;
   }
 
+  /// 打包机展示名（名称 + IP/host，便于区分同 tag 多机）。
+  String get machineLabel {
+    final name = server.displayName.trim();
+    final host = Uri.tryParse(server.url)?.host.trim() ?? '';
+    if (name.isNotEmpty && host.isNotEmpty && !name.contains(host)) {
+      return '$name（$host）';
+    }
+    if (name.isNotEmpty) return name;
+    if (host.isNotEmpty) return host;
+    final tag = server.tag.trim();
+    return tag.isNotEmpty ? tag : '未知打包机';
+  }
+
   /// 给用户看的提示文案。
   String get userMessage =>
-      '${server.displayName} 存在相同打包（${status.label}，$detailLabel），请稍后再试';
+      '$machineLabel 正在${status.label}（$detailLabel）';
 }
 
 class _CachedCrumb {

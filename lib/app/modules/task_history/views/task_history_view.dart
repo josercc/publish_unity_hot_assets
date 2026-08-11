@@ -70,9 +70,21 @@ class TaskHistoryView extends GetView<TaskHistoryController> {
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (context, index) {
               final task = items[index];
+              final cancelling =
+                  controller.cancellingTaskIds.contains(task.id);
+              final canCancel = task.status == JenkinsJobRunStatus.waiting ||
+                  task.status == JenkinsJobRunStatus.building;
               return _TaskHistoryTile(
                 task: task,
+                canCancel: canCancel,
+                cancelling: cancelling,
                 onRetry: () => controller.retryTask(task),
+                onCancel: canCancel
+                    ? () {
+                        // ignore: discarded_futures
+                        controller.cancelTask(task);
+                      }
+                    : null,
               );
             },
           ),
@@ -86,15 +98,23 @@ class _TaskHistoryTile extends StatelessWidget {
   const _TaskHistoryTile({
     required this.task,
     required this.onRetry,
+    required this.canCancel,
+    required this.cancelling,
+    this.onCancel,
   });
 
   final JenkinsHistoricalTask task;
   final VoidCallback onRetry;
+  final bool canCancel;
+  final bool cancelling;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final buildText = task.buildNumber != null ? '#${task.buildNumber}' : null;
+    final buildText = task.buildNumber != null
+        ? '#${task.buildNumber}'
+        : (task.queueId != null ? '队列 #${task.queueId}' : null);
     final serverText = [
       if (task.serverName.isNotEmpty) task.serverName,
       if (task.serverTag.isNotEmpty) task.serverTag,
@@ -143,10 +163,28 @@ class _TaskHistoryTile extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 8),
-            FilledButton.tonalIcon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.replay, size: 16),
-              label: const Text('重试'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (canCancel)
+                  FilledButton.tonalIcon(
+                    onPressed: cancelling ? null : onCancel,
+                    icon: cancelling
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.cancel_outlined, size: 16),
+                    label: Text(cancelling ? '取消中' : '取消'),
+                  ),
+                FilledButton.tonalIcon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.replay, size: 16),
+                  label: const Text('重试'),
+                ),
+              ],
             ),
           ],
         ),

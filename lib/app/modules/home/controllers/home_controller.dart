@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/appwrite_auth_service.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_service.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_browser_launcher.dart';
 import 'package:publish_unity_hot_assets/app/common/ntfy/jenkins_workload_service.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 
@@ -30,6 +32,15 @@ class HomeController extends GetxController {
   /// 单选切换：再次点击同一台取消选中。
   void togglePackagingServer(String serverId) {
     packagingServers.toggleSelectedServer(serverId);
+  }
+
+  /// 应用内浏览器打开 Jenkins，并自动填充账号密码。
+  Future<void> openJenkinsInBrowser(PackagingServer server) async {
+    try {
+      await JenkinsBrowserLauncher.open(server);
+    } catch (e) {
+      SmartDialog.showToast('打开 Jenkins 失败: $e');
+    }
   }
 
   /// Appwrite 会话检测定时任务

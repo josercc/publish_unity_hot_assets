@@ -1,7 +1,7 @@
 name: publish_unity_hot_assets
 description: "A new Flutter project."
 publish_to: "none"
-version: 3.0.1
+version: 3.1.0
 
 environment:
   sdk: ^3.5.4
@@ -28,6 +28,7 @@ dependencies:
   # 13.1.1 要求 Target.expired 为 bool；自建 Appwrite 常返回 null，导致 account.get() 崩溃
   appwrite: 13.0.0
   file_selector: ^1.1.0
+  desktop_webview_window: ^0.3.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

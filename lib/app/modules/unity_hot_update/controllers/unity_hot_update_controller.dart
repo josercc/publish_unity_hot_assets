@@ -17,6 +17,7 @@ import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.da
 import 'package:publish_unity_hot_assets/app/common/business_session_bootstrap.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_duplicate_confirm.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_controller_mixin.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_service.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
@@ -941,6 +942,7 @@ class UnityHotUpdateController extends GetxController
         path:
             '/api/platformservice/sceneResourceManager/querySceneSourceList',
         data: {
+          'client': curPlatform.value,
           'page': {
             'pageSize': pageSize,
             'pageNo': 1,
@@ -961,7 +963,7 @@ class UnityHotUpdateController extends GetxController
       SmartDialog.dismiss();
 
       // 筛选数据
-      // 1. 根据平台（client）筛选
+      // 1. 根据平台（client）筛选（服务端已按 client / 兼容版本过滤，本地再兜底）
       // 2. status = 1
       // 3. minCompatibleVersion 和当前最低版本一致（需要提取版本号部分进行比较）
       // 4. highCompatibleVersion 和当前最高版本一致（需要提取版本号部分进行比较）
@@ -1059,6 +1061,9 @@ class UnityHotUpdateController extends GetxController
         path:
             '/api/platformservice/sceneResourceManager/querySceneSourceList',
         data: {
+          'client': curPlatform.value,
+          'minCompatibleVersion': minVersionController.text.trim(),
+          'highCompatibleVersion': maxVersionController.text.trim(),
           'page': {
             'pageSize': pageSize,
             'pageNo': 1,
@@ -1277,7 +1282,15 @@ class PackResourceTask extends Task<void> {
     );
     if (duplicates.isNotEmpty) {
       final tip = duplicates.map((e) => e.userMessage).join('\n');
-      throw tip;
+      status.value = TaskStatus.fromCode(
+        TaskStatusCode.processing,
+        '发现相同配置任务，等待确认...',
+      );
+      final continueSubmit =
+          await confirmContinueDespiteDuplicateJobs(duplicates);
+      if (!continueSubmit) {
+        throw '已取消提交（存在相同配置任务）\n$tip';
+      }
     }
 
     int? queueId;

@@ -106,6 +106,10 @@ class JenkinsJobParamsForm extends StatelessWidget {
 
       final runStatus = controller.jobRunStatus.value;
       final runBusy = runStatus.isRunning;
+      final cancelling = controller.isCancellingJobRun.value;
+      final canCancel = runStatus == JenkinsJobRunStatus.waiting ||
+          runStatus == JenkinsJobRunStatus.building ||
+          runStatus == JenkinsJobRunStatus.submitting;
 
       final header = Padding(
         padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
@@ -148,6 +152,32 @@ class JenkinsJobParamsForm extends StatelessWidget {
                       : const Icon(Icons.play_arrow, size: 18),
                   label: Text(runBusy ? '执行中' : '执行任务'),
                 ),
+                if (canCancel)
+                  OutlinedButton.icon(
+                    onPressed: cancelling
+                        ? null
+                        : () {
+                            // ignore: discarded_futures
+                            controller.cancelJenkinsJob();
+                          },
+                    icon: cancelling
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            Icons.cancel_outlined,
+                            size: 18,
+                            color: theme.colorScheme.error,
+                          ),
+                    label: Text(
+                      cancelling ? '取消中' : '取消任务',
+                      style: TextStyle(
+                        color: cancelling ? null : theme.colorScheme.error,
+                      ),
+                    ),
+                  ),
                 OutlinedButton.icon(
                   onPressed: () {
                     // ignore: discarded_futures

@@ -1,3 +1,4 @@
+import 'package:desktop_webview_window/desktop_webview_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 
@@ -10,8 +11,13 @@ import 'package:publish_unity_hot_assets/app/common/updater/update_helper.dart';
 
 import 'app/routes/app_pages.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // desktop_webview_window 独立标题栏进程入口
+  if (runWebViewTitleBarWidget(args)) {
+    return;
+  }
 
   Get.put(GlobalServer());
   Get.put(AppwriteAuthService());
