@@ -34,6 +34,16 @@ class LoginView extends GetView<LoginController> {
                   controller: controller.passwordTextController,
                   isPassword: true,
                 ),
+                Obx(
+                  () => SwitchListTile(
+                    title: const Text('内网模式'),
+                    subtitle: const Text('开启后直接请求 Jenkins，不再走中转'),
+                    value: controller.isIntranetJenkinsMode.value,
+                    onChanged: (value) {
+                      controller.isIntranetJenkinsMode.value = value;
+                    },
+                  ),
+                ),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: () async {

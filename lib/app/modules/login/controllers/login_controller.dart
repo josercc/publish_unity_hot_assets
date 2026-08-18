@@ -40,6 +40,7 @@ class LoginController extends GetxController {
 
   /// 当前选中的 Jenkins 服务器 ID
   final selectedJenkinsServerId = RxnString();
+  final isIntranetJenkinsMode = true.obs;
 
   @override
   void onInit() {
@@ -262,6 +263,8 @@ class LoginController extends GetxController {
           : (existing?.jenkinsServers ?? const []),
       selectedJenkinsServerId:
           selectedJenkinsServerId.value ?? existing?.selectedJenkinsServerId,
+      isIntranetJenkinsMode:
+          isIntranetJenkinsMode.value,
     );
 
     await sp.setString(
@@ -303,6 +306,7 @@ class LoginController extends GetxController {
 
         jenkinsServers.assignAll(useServers);
         selectedJenkinsServerId.value = useSelected;
+        isIntranetJenkinsMode.value = loginConfig.isIntranetJenkinsMode;
 
         final server = selectedServer ??
             (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
@@ -321,6 +325,7 @@ class LoginController extends GetxController {
             jenkinsPassword: loginConfig.jenkinsPassword,
             jenkinsServers: jenkinsServers.toList(),
             selectedJenkinsServerId: selectedJenkinsServerId.value,
+            isIntranetJenkinsMode: loginConfig.isIntranetJenkinsMode,
           );
           await sp.setString(
             environment.toString(),
@@ -345,6 +350,7 @@ class LoginController extends GetxController {
         jenkinsServerNameTextController.clear();
         jenkinsServers.clear();
         selectedJenkinsServerId.value = null;
+        isIntranetJenkinsMode.value = true;
       }
     } on FormatException catch (e) {
       final sp = await SharedPreferences.getInstance();
@@ -457,6 +463,7 @@ class LoginController extends GetxController {
     jenkinsServerNameTextController.clear();
     jenkinsServers.clear();
     selectedJenkinsServerId.value = null;
+    isIntranetJenkinsMode.value = true;
   }
 
   Future<void> saveSharedJenkinsCurrent() async {

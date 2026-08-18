@@ -121,6 +121,7 @@ class LoginConfig {
 
   /// 当前选中的 Jenkins 服务器 ID
   final String? selectedJenkinsServerId;
+  final bool isIntranetJenkinsMode;
   const LoginConfig({
     required this.gmallUsername,
     required this.gmallPassword,
@@ -129,6 +130,7 @@ class LoginConfig {
     required this.environmentConfig,
     this.jenkinsServers = const [],
     this.selectedJenkinsServerId,
+    this.isIntranetJenkinsMode = true,
   });
 
   factory LoginConfig.fromJson(Map<String, dynamic> json) {
@@ -187,6 +189,7 @@ class LoginConfig {
       jenkinsPassword: legacyJenkinsPassword,
       jenkinsServers: servers,
       selectedJenkinsServerId: normalizedSelectedId,
+      isIntranetJenkinsMode: json['isIntranetJenkinsMode'] != false,
     );
   }
 
@@ -199,6 +202,7 @@ class LoginConfig {
       'environmentConfig': environmentConfig.toJson(),
       'jenkinsServers': jenkinsServers.map((e) => e.toJson()).toList(),
       'selectedJenkinsServerId': selectedJenkinsServerId,
+      'isIntranetJenkinsMode': isIntranetJenkinsMode,
     };
   }
 }

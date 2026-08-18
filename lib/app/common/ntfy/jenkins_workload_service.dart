@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
+import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/common/ntfy/ntfy_agent_client.dart';
 
 /// Jenkins 工作负载状态（用于打包中心列表色标）。
@@ -74,7 +76,7 @@ class JenkinsWorkloadService {
       return JenkinsWorkloadStatus.offline;
     }
 
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -116,7 +118,7 @@ class JenkinsWorkloadService {
     required String jenkinsBase,
     required Map<String, String> headers,
   }) async {
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
       method: 'GET',
       url: '$jenkinsBase/computer/api/json',
@@ -140,7 +142,7 @@ class JenkinsWorkloadService {
     required String jenkinsBase,
     required Map<String, String> headers,
   }) async {
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
       method: 'GET',
       url: '$jenkinsBase/queue/api/json',
@@ -166,6 +168,15 @@ class JenkinsWorkloadService {
     return 'http://127.0.0.1:$port';
   }
 
+  bool get _useDirectJenkins => global.isIntranetJenkinsMode;
+
+  String _jenkinsBase(String url) {
+    if (_useDirectJenkins) {
+      return url.trim().replaceAll(RegExp(r'/+$'), '');
+    }
+    return _localJenkinsBase(url);
+  }
+
   String? _basicAuth(String userName, String password) {
     final user = userName.trim();
     if (user.isEmpty) return null;
@@ -181,6 +192,41 @@ class JenkinsWorkloadService {
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
     }
     return const {};
+  }
+
+  Future<NtfyProxyResponse> _requestJenkins({
+    required String topic,
+    required String method,
+    required String url,
+    Map<String, String>? headers,
+    Map<String, String>? params,
+  }) async {
+    if (!_useDirectJenkins) {
+      return _client.proxyHttp(
+        topic: topic,
+        method: method,
+        url: url,
+        headers: headers,
+        params: params,
+      );
+    }
+
+    final res = await global.dio.request(
+      url,
+      queryParameters: params,
+      options: Options(
+        method: method,
+        headers: headers,
+        validateStatus: (status) => status != null && status < 600,
+      ),
+    );
+    return NtfyProxyResponse(
+      requestId: null,
+      ok: (res.statusCode ?? 500) < 400,
+      statusCode: res.statusCode,
+      body: res.data,
+      error: (res.statusCode ?? 500) >= 400 ? '${res.data}' : null,
+    );
   }
 
   void close() {

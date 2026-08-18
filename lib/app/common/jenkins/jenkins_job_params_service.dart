@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_service.dart';
 import 'package:publish_unity_hot_assets/app/common/environment.dart';
@@ -134,15 +135,16 @@ class JenkinsJobParamsService {
       throw StateError('无法从打包机 URL 解析 ntfy topic: ${target.url}');
     }
 
-    final jenkinsBase = _localJenkinsBase(target.url);
+    final jenkinsBase = _jenkinsBase(target.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final auth = _basicAuth(target.userName, target.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
     };
 
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: target.url,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/api/json',
       headers: headers,
@@ -176,6 +178,7 @@ class JenkinsJobParamsService {
       jobName: jobName,
       params: params,
       topic: topic,
+      serverUrl: target.url,
       jenkinsBase: jenkinsBase,
       headers: headers,
       crumbHeaders: crumbHeaders,
@@ -196,7 +199,7 @@ class JenkinsJobParamsService {
     if (topic == null || topic.isEmpty) {
       throw StateError('无法从打包机 URL 解析 ntfy topic: ${server.url}');
     }
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -209,6 +212,7 @@ class JenkinsJobParamsService {
     );
     return _runGetChoicesScript(
       topic: topic,
+      serverUrl: server.url,
       jenkinsBase: jenkinsBase,
       headers: headers,
       crumbHeaders: crumbHeaders,
@@ -222,6 +226,7 @@ class JenkinsJobParamsService {
     required String jobName,
     required List<JenkinsJobParameter> params,
     required String topic,
+    required String serverUrl,
     required String jenkinsBase,
     required Map<String, String> headers,
     required Map<String, String> crumbHeaders,
@@ -251,6 +256,7 @@ class JenkinsJobParamsService {
       try {
         final choices = await _runGetChoicesScript(
           topic: topic,
+          serverUrl: serverUrl,
           jenkinsBase: jenkinsBase,
           headers: headers,
           crumbHeaders: crumbHeaders,
@@ -285,6 +291,7 @@ class JenkinsJobParamsService {
   /// 通过 Jenkins `/scriptText` 执行 Groovy，调用 Active Choices 的 getChoices()。
   Future<List<String>> _runGetChoicesScript({
     required String topic,
+    required String serverUrl,
     required String jenkinsBase,
     required Map<String, String> headers,
     required Map<String, String> crumbHeaders,
@@ -314,8 +321,9 @@ class JenkinsJobParamsService {
       'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
     };
 
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: serverUrl,
       method: 'POST',
       url: '$jenkinsBase/scriptText',
       headers: postHeaders,
@@ -333,8 +341,9 @@ class JenkinsJobParamsService {
         required: false,
       );
       if (fresh.isNotEmpty) {
-        final retry = await _client.proxyHttp(
+        final retry = await _requestJenkins(
           topic: topic,
+          serverUrl: serverUrl,
           method: 'POST',
           url: '$jenkinsBase/scriptText',
           headers: {
@@ -464,8 +473,9 @@ println JsonOutput.toJson(list)
     Object? lastError;
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
-        final res = await _client.proxyHttp(
+        final res = await _requestJenkins(
           topic: topic,
+          serverUrl: jenkinsBase,
           method: 'GET',
           url: '$jenkinsBase/crumbIssuer/api/json',
           headers: headers,
@@ -599,6 +609,15 @@ println JsonOutput.toJson(list)
     return 'http://127.0.0.1:$port';
   }
 
+  bool get _useDirectJenkins => global.isIntranetJenkinsMode;
+
+  String _jenkinsBase(String url) {
+    if (_useDirectJenkins) {
+      return url.trim().replaceAll(RegExp(r'/+$'), '');
+    }
+    return _localJenkinsBase(url);
+  }
+
   String? _basicAuth(String userName, String password) {
     final user = userName.trim();
     if (user.isEmpty) return null;
@@ -621,6 +640,56 @@ println JsonOutput.toJson(list)
     return '${text.substring(0, 200)}...';
   }
 
+  Future<NtfyProxyResponse> _requestJenkins({
+    required String topic,
+    required String serverUrl,
+    required String method,
+    required String url,
+    Map<String, String>? headers,
+    Map<String, String>? params,
+    Object? body,
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    if (!_useDirectJenkins) {
+      return _client.proxyHttp(
+        topic: topic,
+        method: method,
+        url: url,
+        headers: headers,
+        params: params,
+        body: body,
+        timeout: timeout,
+      );
+    }
+
+    final res = await global.dio.request(
+      url,
+      data: body,
+      queryParameters: params,
+      options: Options(
+        method: method,
+        headers: headers,
+        sendTimeout: timeout,
+        receiveTimeout: timeout,
+        validateStatus: (status) => status != null && status < 600,
+      ),
+    );
+    final responseHeaders = <String, String>{};
+    res.headers.map.forEach((key, value) {
+      if (value.isNotEmpty) {
+        responseHeaders[key] = value.join(', ');
+      }
+    });
+    return NtfyProxyResponse(
+      requestId: null,
+      ok: (res.statusCode ?? 500) < 400,
+      statusCode: res.statusCode,
+      body: res.data,
+      error: (res.statusCode ?? 500) >= 400 ? '${res.data}' : null,
+      headers: responseHeaders,
+    );
+  }
+
   /// 触发 Job 构建，返回队列项 ID（用于后续轮询）。
   Future<JenkinsTriggeredBuild> triggerBuild({
     required String jobName,
@@ -631,7 +700,7 @@ println JsonOutput.toJson(list)
     if (topic == null || topic.isEmpty) {
       throw StateError('无法从打包机 URL 解析 ntfy topic: ${server.url}');
     }
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
@@ -655,8 +724,9 @@ println JsonOutput.toJson(list)
         .join('&');
 
     Future<NtfyProxyResponse> postBuild(Map<String, String> crumbs) {
-      return _client.proxyHttp(
+      return _requestJenkins(
         topic: topic,
+        serverUrl: server.url,
         method: 'POST',
         url: '$jenkinsBase/job/$encodedJob/buildWithParameters',
         headers: {
@@ -730,7 +800,7 @@ println JsonOutput.toJson(list)
     required int queueId,
   }) async {
     final topic = _requireTopic(server);
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -744,8 +814,9 @@ println JsonOutput.toJson(list)
     );
 
     Future<NtfyProxyResponse> postCancel(Map<String, String> crumbs) {
-      return _client.proxyHttp(
+      return _requestJenkins(
         topic: topic,
+        serverUrl: server.url,
         method: 'POST',
         url: '$jenkinsBase/queue/cancelItem',
         headers: {
@@ -784,7 +855,7 @@ println JsonOutput.toJson(list)
     required int buildNumber,
   }) async {
     final topic = _requireTopic(server);
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
@@ -799,8 +870,9 @@ println JsonOutput.toJson(list)
     );
 
     Future<NtfyProxyResponse> postStop(Map<String, String> crumbs) {
-      return _client.proxyHttp(
+      return _requestJenkins(
         topic: topic,
+        serverUrl: server.url,
         method: 'POST',
         url: '$jenkinsBase/job/$encodedJob/$buildNumber/stop',
         headers: {
@@ -870,7 +942,7 @@ println JsonOutput.toJson(list)
     if (topic == null || topic.isEmpty) {
       throw StateError('无法从打包机 URL 解析 ntfy topic: ${server.url}');
     }
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -924,8 +996,9 @@ println JsonOutput.toJson(list)
     required Map<String, String> headers,
     required int queueId,
   }) async {
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/queue/item/$queueId/api/json',
       headers: headers,
@@ -997,8 +1070,9 @@ println JsonOutput.toJson(list)
     int? queueId,
   }) async {
     final encodedJob = Uri.encodeComponent(jobName);
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/$buildNumber/api/json',
       headers: headers,
@@ -1070,8 +1144,9 @@ println JsonOutput.toJson(list)
     required String jobName,
   }) async {
     final encodedJob = Uri.encodeComponent(jobName);
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/lastBuild/api/json',
       headers: headers,
@@ -1127,7 +1202,9 @@ println JsonOutput.toJson(list)
         .map((s) => s.ntfyTopic)
         .whereType<String>()
         .where((t) => t.isNotEmpty);
-    await _client.ensureTopicsListening(topics);
+    if (!_useDirectJenkins) {
+      await _client.ensureTopicsListening(topics);
+    }
 
     // 按机串行：每台 topic 内复用同一条 SSE，避免并行多路丢包
     final out = <JenkinsDuplicateActiveJob>[];
@@ -1158,7 +1235,7 @@ println JsonOutput.toJson(list)
   }) async {
     final topic = server.ntfyTopic;
     if (topic == null || topic.isEmpty) return const [];
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -1216,8 +1293,9 @@ println JsonOutput.toJson(list)
     required Map<String, String> headers,
     required String jobName,
   }) async {
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/queue/api/json',
       headers: headers,
@@ -1281,8 +1359,9 @@ println JsonOutput.toJson(list)
     int lookback = 20,
   }) async {
     final encodedJob = Uri.encodeComponent(jobName);
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/api/json',
       headers: headers,
@@ -1358,7 +1437,7 @@ println JsonOutput.toJson(list)
     if (topic == null || topic.isEmpty) {
       throw StateError('无法从打包机 URL 解析 ntfy topic: ${server.url}');
     }
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
@@ -1393,8 +1472,9 @@ println JsonOutput.toJson(list)
       );
     }
 
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/api/json',
       headers: headers,
@@ -1524,15 +1604,16 @@ println JsonOutput.toJson(list)
 
     final topic = server.ntfyTopic;
     if (topic == null || topic.isEmpty) return null;
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
       if (auth != null) 'Authorization': auth,
     };
     final encodedJob = Uri.encodeComponent(jobName);
 
-    final listRes = await _client.proxyHttp(
+    final listRes = await _requestJenkins(
       topic: topic,
+      serverUrl: jenkinsBase,
       method: 'GET',
       url: '$jenkinsBase/job/$encodedJob/api/json',
       headers: headers,
@@ -1553,8 +1634,9 @@ println JsonOutput.toJson(list)
       final buildNumber = n is num ? n.toInt() : int.tryParse('$n');
       if (buildNumber == null) continue;
 
-      final detail = await _client.proxyHttp(
+      final detail = await _requestJenkins(
         topic: topic,
+        serverUrl: jenkinsBase,
         method: 'GET',
         url: '$jenkinsBase/job/$encodedJob/$buildNumber/api/json',
         headers: headers,

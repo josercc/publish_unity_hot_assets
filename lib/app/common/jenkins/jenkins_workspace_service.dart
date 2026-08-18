@@ -37,17 +37,17 @@ class JenkinsWorkspaceService {
     String relativePath = '',
   }) async {
     final topic = _requireTopic(server);
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final rel = _normalizeRelativePath(relativePath);
-    // 目录 URL 必须以 `/` 结尾，Agent 才会按 workspace 目录走 *plain* 列表。
     final url = rel.isEmpty
         ? '$jenkinsBase/job/$encodedJob/ws/'
         : '$jenkinsBase/job/$encodedJob/ws/${_encodeWorkspacePath(rel)}/';
 
     final auth = _basicAuth(server.userName, server.password);
-    final res = await _client.proxyHttp(
+    final res = await _requestJenkins(
       topic: topic,
+      serverUrl: server.url,
       method: 'GET',
       url: url,
       headers: {
@@ -69,6 +69,9 @@ class JenkinsWorkspaceService {
       );
     }
 
+    if (_useDirectJenkins) {
+      return _entriesFromDirectWorkspaceHtml('${res.body}');
+    }
     return _entriesFromAgentListing(res.bodyAsMap());
   }
 
@@ -80,7 +83,7 @@ class JenkinsWorkspaceService {
     required String jobName,
   }) async {
     final topic = _requireTopic(server);
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final auth = _basicAuth(server.userName, server.password);
     final headers = <String, String>{
@@ -94,8 +97,9 @@ class JenkinsWorkspaceService {
     );
 
     Future<NtfyProxyResponse> postWipe(Map<String, String> crumbs) {
-      return _client.proxyHttp(
+      return _requestJenkins(
         topic: topic,
+        serverUrl: server.url,
         method: 'POST',
         url: '$jenkinsBase/job/$encodedJob/doWipeOutWorkspace',
         headers: {
@@ -208,7 +212,7 @@ class JenkinsWorkspaceService {
     })? onProgress,
   }) async {
     final topic = _requireTopic(server);
-    final jenkinsBase = _localJenkinsBase(server.url);
+    final jenkinsBase = _jenkinsBase(server.url);
     final encodedJob = Uri.encodeComponent(jobName);
     final rel = _normalizeRelativePath(relativeFilePath);
     if (rel.isEmpty || !rel.toLowerCase().endsWith('.apk')) {
@@ -219,6 +223,26 @@ class JenkinsWorkspaceService {
         '$jenkinsBase/job/$encodedJob/ws/${_encodeWorkspacePath(rel)}';
     final fileName = p.basename(rel);
     final savePath = p.join(saveDirectory, fileName);
+
+    if (_useDirectJenkins) {
+      onProgress?.call(
+        phase: 'downloading',
+        message: '正在从 Jenkins 直接下载 APK...',
+        percent: 0,
+      );
+      await _downloadDirectFromJenkins(
+        url: apkUrl,
+        savePath: savePath,
+        authHeader: _basicAuth(server.userName, server.password),
+        onProgress: onProgress,
+      );
+      onProgress?.call(
+        phase: 'cleanup',
+        message: '已保存到 $savePath',
+        percent: 100,
+      );
+      return savePath;
+    }
 
     onProgress?.call(
       phase: 'uploading',
@@ -423,6 +447,15 @@ class JenkinsWorkspaceService {
     return 'http://127.0.0.1:$port';
   }
 
+  bool get _useDirectJenkins => global.isIntranetJenkinsMode;
+
+  String _jenkinsBase(String url) {
+    if (_useDirectJenkins) {
+      return url.trim().replaceAll(RegExp(r'/+$'), '');
+    }
+    return _localJenkinsBase(url);
+  }
+
   String? _basicAuth(String userName, String password) {
     final user = userName.trim();
     if (user.isEmpty) return null;
@@ -462,8 +495,9 @@ class JenkinsWorkspaceService {
     Object? lastError;
     for (var attempt = 0; attempt < 3; attempt++) {
       try {
-        final res = await _client.proxyHttp(
+        final res = await _requestJenkins(
           topic: topic,
+          serverUrl: jenkinsBase,
           method: 'GET',
           url: '$jenkinsBase/crumbIssuer/api/json',
           headers: headers,
@@ -523,6 +557,121 @@ class JenkinsWorkspaceService {
     }
     if (pairs.isEmpty) return null;
     return pairs.join('; ');
+  }
+
+  List<JenkinsWorkspaceEntry> _entriesFromDirectWorkspaceHtml(String html) {
+    final entries = <JenkinsWorkspaceEntry>[];
+    final matches = RegExp(
+      r'<a[^>]+href="([^"]+)"[^>]*>([^<]+)</a>',
+      caseSensitive: false,
+    ).allMatches(html);
+    for (final match in matches) {
+      final href = match.group(1)?.trim() ?? '';
+      final name = match.group(2)?.trim() ?? '';
+      if (href.isEmpty || name.isEmpty) continue;
+      if (name == '..' || href == '../') continue;
+      final decodedHref = Uri.decodeFull(href);
+      final decodedName = Uri.decodeFull(name);
+      entries.add(
+        JenkinsWorkspaceEntry(
+          name: decodedName.replaceAll(RegExp(r'/$'), ''),
+          href: decodedHref,
+          isDirectory: decodedHref.endsWith('/'),
+        ),
+      );
+    }
+    entries.sort((a, b) {
+      if (a.isDirectory != b.isDirectory) {
+        return a.isDirectory ? -1 : 1;
+      }
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return entries;
+  }
+
+  Future<NtfyProxyResponse> _requestJenkins({
+    required String topic,
+    required String serverUrl,
+    required String method,
+    required String url,
+    Map<String, String>? headers,
+    Map<String, String>? params,
+    Object? body,
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    if (!_useDirectJenkins) {
+      return _client.proxyHttp(
+        topic: topic,
+        method: method,
+        url: url,
+        headers: headers,
+        params: params,
+        body: body,
+        timeout: timeout,
+      );
+    }
+
+    final res = await global.dio.request(
+      url,
+      data: body,
+      queryParameters: params,
+      options: Options(
+        method: method,
+        headers: headers,
+        sendTimeout: timeout,
+        receiveTimeout: timeout,
+        responseType: ResponseType.plain,
+        validateStatus: (status) => status != null && status < 600,
+      ),
+    );
+    final responseHeaders = <String, String>{};
+    res.headers.map.forEach((key, value) {
+      if (value.isNotEmpty) {
+        responseHeaders[key] = value.join(', ');
+      }
+    });
+    return NtfyProxyResponse(
+      requestId: null,
+      ok: (res.statusCode ?? 500) < 400,
+      statusCode: res.statusCode,
+      body: res.data,
+      error: (res.statusCode ?? 500) >= 400 ? '${res.data}' : null,
+      headers: responseHeaders,
+    );
+  }
+
+  Future<void> _downloadDirectFromJenkins({
+    required String url,
+    required String savePath,
+    required String? authHeader,
+    void Function({
+      required String phase,
+      required String message,
+      double? percent,
+    })? onProgress,
+  }) async {
+    await global.dio.download(
+      url,
+      savePath,
+      options: Options(
+        headers: {
+          if (authHeader != null) 'Authorization': authHeader,
+        },
+      ),
+      onReceiveProgress: (received, total) {
+        final percent =
+            total > 0 ? (received / total * 100).clamp(0, 100).toDouble() : null;
+        final receivedMb = (received / 1024 / 1024).toStringAsFixed(2);
+        final totalText = total > 0
+            ? ' / ${(total / 1024 / 1024).toStringAsFixed(2)}MB'
+            : 'MB';
+        onProgress?.call(
+          phase: 'downloading',
+          message: '[$receivedMb$totalText] 正在下载 APK...',
+          percent: percent,
+        );
+      },
+    );
   }
 }
 

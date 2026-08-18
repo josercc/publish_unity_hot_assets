@@ -188,6 +188,7 @@ $key
           selected?.jenkinsPassword ?? existing?.jenkinsPassword ?? '',
       jenkinsServers: servers,
       selectedJenkinsServerId: selectedId,
+      isIntranetJenkinsMode: existing?.isIntranetJenkinsMode ?? true,
     );
 
     await sp.setString(env.toString(), jsonEncode(loginConfig.toJson()));
@@ -239,6 +240,8 @@ $key
       );
       restored = true;
     }
+    global.isIntranetJenkinsMode =
+        loginConfig?.isIntranetJenkinsMode ?? true;
 
     // 切换环境前清空旧 Gmall 会话，避免串用
     global.gmallUrl = null;

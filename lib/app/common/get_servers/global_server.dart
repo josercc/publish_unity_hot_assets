@@ -12,6 +12,7 @@ class GlobalServer extends GetxService {
   DateTime? tokenExpireTime; // Token过期时间
   String? gmallUrl;
   Environment? currentEnvironment;
+  bool isIntranetJenkinsMode = true;
 
   JenkinsApi? jenkinsApi;
 

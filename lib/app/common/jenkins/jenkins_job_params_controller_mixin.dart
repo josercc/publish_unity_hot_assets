@@ -106,6 +106,16 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
 
   /// 未选中 → 自动分配；已选中 → 走指定机器。
   Future<PackagingServer?> ensureTaskServer() async {
+    final refresh = await packagingServers.refreshAndCheckSelection();
+    if (refresh.selectionMissing) {
+      _applyResolvedServer(null);
+      final missingName = refresh.missingSelectedServerName;
+      throw StateError(
+        missingName == null || missingName.isEmpty
+            ? '当前选中的打包机已不在可用列表中，请更换其他打包机'
+            : '当前选中的打包机「$missingName」已不在可用列表中，请更换其他打包机',
+      );
+    }
     final server = await _paramsService.resolveTaskServer();
     _applyResolvedServer(server);
     return server;

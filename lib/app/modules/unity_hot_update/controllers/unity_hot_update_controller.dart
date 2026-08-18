@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -25,6 +26,35 @@ import 'package:publish_unity_hot_assets/app/common/ntfy/ntfy_agent_client.dart'
 import 'package:publish_unity_hot_assets/app/modules/home/datas/task.dart';
 import 'package:xml2json/xml2json.dart';
 import 'package:crypto/crypto.dart' as crypto;
+
+/// Gmall 请求封装：遇到 401 时自动恢复一次会话并重试。
+Future<dynamic> _postWithGmallReauth({
+  required String path,
+  required Object? data,
+  void Function(int, int)? onSendProgress,
+}) async {
+  try {
+    return await global.post(
+      path: path,
+      data: data,
+      onSendProgress: onSendProgress,
+    );
+  } on DioException catch (e) {
+    if (e.response?.statusCode != 401) rethrow;
+    final ok = await BusinessSessionBootstrap.restoreFor(
+      global.currentEnvironment ?? Environment.test,
+      persistSelection: false,
+    );
+    if (!ok || !global.isTokenValid()) {
+      throw const ToastException('Gmall 会话已过期，请重新保存当前环境配置后重试');
+    }
+    return global.post(
+      path: path,
+      data: data,
+      onSendProgress: onSendProgress,
+    );
+  }
+}
 
 class UnityHotUpdateController extends GetxController
     with JenkinsJobParamsControllerMixin {
@@ -443,7 +473,7 @@ class UnityHotUpdateController extends GetxController
     }
 
     SmartDialog.showLoading();
-    final versions = await global.post(
+    final versions = await _postWithGmallReauth(
       path: '/api/platformservice/appManager/queryAppVersionList',
       data: {
         'client': curPlatform.value,
@@ -938,7 +968,7 @@ class UnityHotUpdateController extends GetxController
 
       // 只查询最新的100条数据
       const pageSize = 100;
-      final response = await global.post(
+      final response = await _postWithGmallReauth(
         path:
             '/api/platformservice/sceneResourceManager/querySceneSourceList',
         data: {
@@ -1057,7 +1087,7 @@ class UnityHotUpdateController extends GetxController
 
       // 只查询最新的100条数据
       const pageSize = 100;
-      final response = await global.post(
+      final response = await _postWithGmallReauth(
         path:
             '/api/platformservice/sceneResourceManager/querySceneSourceList',
         data: {
@@ -1530,7 +1560,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
 
   /// 根据 md5 查询网络图片地址
   Future<String?> queryNetworkImageUrl(String md5) async {
-    final response = await global.post(
+    final response = await _postWithGmallReauth(
       path: '/api/platformservice/md5/find',
       data: {
         'md5': [md5],
@@ -1557,7 +1587,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     required String fileHash,
     required int fileSize,
   }) async {
-    final response = await global.post(
+    final response = await _postWithGmallReauth(
       path: '/api/platformservice/file/initiatePartFileUpload',
       data: {
         'fileName': fileName,
@@ -1590,7 +1620,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     required Uint8List bytes,
     required String fileName,
   }) async {
-    final response = await global.post(
+    final response = await _postWithGmallReauth(
       path: '/api/platformservice/file/uploadPart',
       data: FormData.fromMap({
         'file': MultipartFile.fromBytes(
@@ -1620,7 +1650,7 @@ class UploadResourceTask extends Task<UploadResourceResonse> {
     required String uploadId,
     required int partTotal,
   }) async {
-    final response = await global.post(
+    final response = await _postWithGmallReauth(
       path: '/api/platformservice/file/completeUpload',
       data: {
         'uploadId': uploadId,
@@ -1662,6 +1692,14 @@ class DownloadZipUrlTask extends Task<String> {
     required this.packagingServer,
   }) : super(name: '获取热更新资源 Zip 包');
 
+  String _jenkinsArtifactPlatformDir() {
+    final lower = platform.toLowerCase();
+    if (lower == 'harmonyos' || lower == 'ohos' || lower == 'harmony') {
+      return 'Harmony';
+    }
+    return platform.toUpperCase();
+  }
+
   @override
   Future<String> execute() async {
     final documentDir = await getApplicationDocumentsDirectory();
@@ -1689,6 +1727,50 @@ class DownloadZipUrlTask extends Task<String> {
     await Directory(hotUpdateDir).create(recursive: true);
 
     if (!isSkipDownload) {
+      if (global.isIntranetJenkinsMode) {
+        final artifactDir = _jenkinsArtifactPlatformDir();
+        final directZipUrl =
+            '${packagingServer.url}/job/build_unity_hot_asset/ws/HotUpdate/$buildNumber/$artifactDir/UploadAssets/*zip*/UploadAssets.zip';
+        final authHeader = _basicAuth(
+          packagingServer.userName,
+          packagingServer.password,
+        );
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.processing,
+          '正在从 Jenkins 直接下载热更新资源...',
+        );
+        await global.dio.download(
+          directZipUrl,
+          zipPath,
+          options: Options(
+            headers: {
+              if (authHeader != null) 'Authorization': authHeader,
+            },
+          ),
+          onReceiveProgress: (received, total) {
+            final receivedMb = (received / 1024 / 1024).toStringAsFixed(2);
+            final totalText = total > 0
+                ? ' / ${(total / 1024 / 1024).toStringAsFixed(2)}MB'
+                : 'MB';
+            status.value = TaskStatus.fromCode(
+              TaskStatusCode.processing,
+              '[$receivedMb$totalText] 正在下载热更新资源 Zip 包',
+            );
+          },
+        );
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.processing,
+          '正在解压热更新资源 Zip 包',
+        );
+        await extractFileToDisk(zipPath, hotUpdateAssetDir.path);
+        await File(zipPath).delete();
+        status.value = TaskStatus.fromCode(
+          TaskStatusCode.success,
+          '热更新资源已就绪（内网直连）',
+        );
+        return join(hotUpdateAssetDir.path, 'UploadAssets');
+      }
+
       status.value = TaskStatus.fromCode(
         TaskStatusCode.processing,
         '正在请求打包机上传热更新资源到 Appwrite...',
@@ -1799,6 +1881,12 @@ class DownloadZipUrlTask extends Task<String> {
     return join(hotUpdateAssetDir.path, 'UploadAssets');
   }
 
+  String? _basicAuth(String userName, String password) {
+    final user = userName.trim();
+    if (user.isEmpty) return null;
+    return 'Basic ${base64Encode(utf8.encode('$user:$password'))}';
+  }
+
   Future<void> _downloadFromAppwrite({
     required String downloadUrl,
     required String fileId,
@@ -1892,7 +1980,7 @@ class ReleaseHotUpdateVersionTask extends Task<void> {
   }
 
   Future<void> _start() async {
-    final response = await global.post(
+    final response = await _postWithGmallReauth(
       path: '/api/platformservice/sceneResourceManager/saveSceneResource',
       data: {
         'client': client,

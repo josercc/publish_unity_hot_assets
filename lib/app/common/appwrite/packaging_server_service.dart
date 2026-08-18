@@ -58,8 +58,35 @@ class PackagingServerService extends GetxService {
     return servers;
   }
 
+  Future<PackagingServerRefreshResult> refreshAndCheckSelection() async {
+    final previousSelectedId = selectedServerId.value;
+    final previousSelected = selectedServer;
+    final servers = await fetchActiveServers();
+    final selectionMissing = previousSelectedId != null &&
+        previousSelectedId.isNotEmpty &&
+        !servers.any((s) => s.id == previousSelectedId);
+    return PackagingServerRefreshResult(
+      servers: servers,
+      selectionMissing: selectionMissing,
+      missingSelectedServerName:
+          selectionMissing ? previousSelected?.displayName : null,
+    );
+  }
+
   void clear() {
     activeServers.clear();
     selectedServerId.value = null;
   }
+}
+
+class PackagingServerRefreshResult {
+  final List<PackagingServer> servers;
+  final bool selectionMissing;
+  final String? missingSelectedServerName;
+
+  const PackagingServerRefreshResult({
+    required this.servers,
+    required this.selectionMissing,
+    required this.missingSelectedServerName,
+  });
 }
