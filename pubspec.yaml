@@ -1,7 +1,7 @@
 name: publish_unity_hot_assets
 description: "A new Flutter project."
 publish_to: "none"
-version: 3.3.0
+version: 3.3.1
 
 environment:
   sdk: ^3.5.4
