@@ -127,10 +127,12 @@ class UpdateController extends GetxController {
       SmartDialog.showLoading(msg: '正在安装更新...');
 
       // 安装更新，获取新应用的路径
-      final newAppPath = await _updaterService.installUpdate(downloadPath);
+      final installResult = await _updaterService.installUpdate(downloadPath);
 
       SmartDialog.dismiss();
       isInstalling.value = false;
+
+      final newAppPath = installResult?.appPath;
 
       // 安装完成后，启动新版本并退出当前版本
       if (newAppPath != null) {
@@ -148,17 +150,18 @@ class UpdateController extends GetxController {
             print('启动新版本失败: $e');
           }
         } else if (Platform.isWindows) {
-          // Windows: 启动新版本的 exe 文件
+          // Windows: 优先启动主程序，找不到时回退到目录下第一个可执行文件
           try {
-            final exePath =
-                path.join(newAppPath, 'publish_unity_hot_assets.exe');
-            if (await File(exePath).exists()) {
+            final exePath = await _resolveWindowsExePath(newAppPath);
+            if (exePath != null) {
               await Process.start(
                 exePath,
                 [],
                 mode: ProcessStartMode.detached,
               );
               print('已启动新版本应用: $exePath');
+            } else {
+              print('未找到可启动的 Windows 可执行文件: $newAppPath');
             }
           } catch (e) {
             print('启动新版本失败: $e');
@@ -167,12 +170,27 @@ class UpdateController extends GetxController {
       }
 
       // 显示重启提示
+      final completionMessage =
+          installResult?.completionMessage ?? '应用已更新成功，新版本正在启动...';
       Get.dialog(
         AlertDialog(
           title: const Text('更新完成'),
-          content: Text(
-            Platform.isWindows ? '应用已更新成功，新版本正在启动...' : '应用已更新成功，新版本正在启动...',
-          ),
+          content: Text(completionMessage),
+          actions: [
+            if (Platform.isMacOS &&
+                installResult?.installedToUserApplications == true &&
+                newAppPath != null)
+              TextButton(
+                onPressed: () async {
+                  try {
+                    await Process.run('open', ['-R', newAppPath]);
+                  } catch (e) {
+                    print('在 Finder 中显示失败: $e');
+                  }
+                },
+                child: const Text('在 Finder 中显示'),
+              ),
+          ],
         ),
         barrierDismissible: false,
       );
@@ -187,7 +205,9 @@ class UpdateController extends GetxController {
       print('更新失败 - 错误: $e');
       print('更新失败 - 堆栈: $stackTrace');
 
-      Get.back(); // 关闭下载进度对话框（如果还在显示）
+      if (Get.isDialogOpen ?? false) {
+        Get.back(); // 关闭下载进度对话框（如果还在显示）
+      }
       SmartDialog.dismiss(); // 关闭加载对话框（如果还在显示）
 
       // 显示详细的错误信息对话框
@@ -298,8 +318,46 @@ class UpdateController extends GetxController {
     }
   }
 
+  Future<String?> _resolveWindowsExePath(String appDirPath) async {
+    final preferred = path.join(appDirPath, 'publish_unity_hot_assets.exe');
+    if (await File(preferred).exists()) {
+      return preferred;
+    }
+
+    final dir = Directory(appDirPath);
+    if (!await dir.exists()) return null;
+    await for (final entity in dir.list(recursive: true)) {
+      if (entity is! File) continue;
+      final ext = path.extension(entity.path).toLowerCase();
+      if (ext != '.exe') continue;
+      final lower = path.basename(entity.path).toLowerCase();
+      if (lower.contains('unins') ||
+          lower.contains('setup') ||
+          lower.contains('install') ||
+          lower.contains('update')) {
+        continue;
+      }
+      return entity.path;
+    }
+    return null;
+  }
+
   /// 显示更新对话框
   void _showUpdateDialog(UpdateInfo info) {
+    _showUpdateDialogAsync(info);
+  }
+
+  Future<void> _showUpdateDialogAsync(UpdateInfo info) async {
+    String? macInstallHint;
+    if (Platform.isMacOS) {
+      try {
+        final preflight = await _updaterService.getMacOSUpdatePreflight();
+        macInstallHint = preflight.installHint;
+      } catch (e) {
+        print('macOS 更新预检失败: $e');
+      }
+    }
+
     Get.dialog(
       AlertDialog(
         title: const Text('发现新版本'),
@@ -316,6 +374,21 @@ class UpdateController extends GetxController {
               const SizedBox(height: 12),
               Text(
                   '下载大小: ${(info.fileSize / 1024 / 1024).toStringAsFixed(2)} MB'),
+              if (macInstallHint != null && macInstallHint.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    macInstallHint,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
               if (info.releaseNotes != null &&
                   info.releaseNotes!.isNotEmpty) ...[
                 const SizedBox(height: 12),

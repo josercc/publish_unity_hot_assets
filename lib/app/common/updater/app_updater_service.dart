@@ -7,6 +7,42 @@ import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.da
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:archive/archive_io.dart';
 
+/// macOS 更新前检查结果（安装目录权限）。
+class MacOSUpdatePreflight {
+  final bool canWriteSystemApplications;
+  final String fallbackTargetPath;
+  final String installHint;
+
+  const MacOSUpdatePreflight({
+    required this.canWriteSystemApplications,
+    required this.fallbackTargetPath,
+    required this.installHint,
+  });
+}
+
+/// 安装结果（含 macOS 用户目录回退信息）。
+class InstallResult {
+  final String? appPath;
+  final bool installedToUserApplications;
+
+  const InstallResult({
+    this.appPath,
+    this.installedToUserApplications = false,
+  });
+
+  String get completionMessage {
+    if (appPath == null) {
+      return '应用已更新成功，安装程序正在处理后续步骤...';
+    }
+    if (installedToUserApplications) {
+      return '应用已更新成功。\n\n安装位置：\n$appPath\n\n'
+          '（当前账户无 /Applications 写入权限，已安装到用户 Applications 目录）\n\n'
+          '新版本正在启动...';
+    }
+    return '应用已更新成功，新版本正在启动...';
+  }
+}
+
 /// 更新信息模型
 class UpdateInfo {
   final String version;
@@ -202,20 +238,57 @@ class AppUpdaterService {
     }
   }
 
+  /// macOS 更新前检查：是否可写入 `/Applications`，以及用户目录回退路径。
+  Future<MacOSUpdatePreflight> getMacOSUpdatePreflight() async {
+    if (!Platform.isMacOS) {
+      return const MacOSUpdatePreflight(
+        canWriteSystemApplications: false,
+        fallbackTargetPath: '',
+        installHint: '',
+      );
+    }
+
+    final packageInfo = await PackageInfo.fromPlatform();
+    final home = Platform.environment['HOME'] ?? '';
+    final appBundleName = '${packageInfo.appName}.app';
+    final fallback = home.isEmpty
+        ? '~/Applications/$appBundleName'
+        : path.join(home, 'Applications', appBundleName);
+    final canWrite = await _canWriteSystemApplications();
+
+    return MacOSUpdatePreflight(
+      canWriteSystemApplications: canWrite,
+      fallbackTargetPath: fallback,
+      installHint: canWrite
+          ? '将安装到系统目录 /Applications'
+          : '当前无 /Applications 写入权限，将安装到：\n$fallback',
+    );
+  }
+
+  Future<bool> _canWriteSystemApplications() async {
+    if (!Platform.isMacOS) return false;
+    final result = await Process.run('test', ['-w', '/Applications']);
+    return result.exitCode == 0;
+  }
+
   /// 安装更新
   /// [updateFilePath] 更新文件路径
-  /// 返回新应用的路径（用于重启）
-  Future<String?> installUpdate(String updateFilePath) async {
+  /// 返回安装结果（含新应用路径与 macOS 回退信息）
+  Future<InstallResult?> installUpdate(String updateFilePath) async {
     try {
       print('开始安装更新，文件路径: $updateFilePath');
       print('文件扩展名: ${path.extension(updateFilePath)}');
 
       if (Platform.isMacOS) {
-        final appPath = await _installMacOSUpdate(updateFilePath);
-        return appPath;
+        final macResult = await _installMacOSUpdate(updateFilePath);
+        if (macResult == null) return null;
+        return InstallResult(
+          appPath: macResult.path,
+          installedToUserApplications: macResult.usedUserApplications,
+        );
       } else if (Platform.isWindows) {
         final appPath = await _installWindowsUpdate(updateFilePath);
-        return appPath;
+        return InstallResult(appPath: appPath);
       } else {
         throw UnsupportedError('不支持的平台: ${Platform.operatingSystem}');
       }
@@ -229,8 +302,7 @@ class AppUpdaterService {
   }
 
   /// macOS 安装更新
-  /// 返回新应用的路径
-  Future<String?> _installMacOSUpdate(String updateFilePath) async {
+  Future<_MacOSInstallResult?> _installMacOSUpdate(String updateFilePath) async {
     final file = File(updateFilePath);
     if (!await file.exists()) {
       throw Exception('更新文件不存在: $updateFilePath');
@@ -245,7 +317,7 @@ class AppUpdaterService {
     if (fileExtension == '.dmg') {
       return await _installFromDMG(updateFilePath);
     } else if (fileExtension == '.zip') {
-      return await _installFromZIP(updateFilePath, isWindows: false);
+      return await _installMacOSFromZipFile(updateFilePath);
     } else {
       // 如果扩展名为空或不识别，尝试通过文件内容判断
       print('扩展名未识别，尝试通过文件内容判断...');
@@ -258,7 +330,7 @@ class AppUpdaterService {
             fileBytes[1] == 0x4B &&
             (fileBytes[2] == 0x03 || fileBytes[2] == 0x05)) {
           print('通过文件头判断为 ZIP 文件');
-          return await _installFromZIP(updateFilePath, isWindows: false);
+          return await _installMacOSFromZipFile(updateFilePath);
         }
       }
 
@@ -271,8 +343,7 @@ class AppUpdaterService {
   }
 
   /// 从 DMG 安装
-  /// 返回新应用的路径
-  Future<String?> _installFromDMG(String dmgPath) async {
+  Future<_MacOSInstallResult?> _installFromDMG(String dmgPath) async {
     print('挂载 DMG: $dmgPath');
 
     // 挂载 DMG（使用 -nobrowse 避免 Finder 自动打开）
@@ -345,12 +416,14 @@ class AppUpdaterService {
           ? Directory(path.join(homeDir, 'Applications', appName))
           : null;
 
-      final installedPath =
-          await _copyAppBundle(appFile, Directory(path.join(applicationsDir.path, appName)),
-              fallbackDir: fallbackDir);
+      final installed = await _copyAppBundle(
+        appFile,
+        Directory(path.join(applicationsDir.path, appName)),
+        fallbackDir: fallbackDir,
+      );
 
-      print('应用安装成功: $installedPath');
-      return installedPath;
+      print('应用安装成功: ${installed.path}');
+      return installed;
     } finally {
       // 卸载 DMG
       print('卸载 DMG: $mountPoint');
@@ -358,9 +431,17 @@ class AppUpdaterService {
     }
   }
 
-  /// 从 ZIP 安装
-  /// [isWindows] 是否为 Windows 平台
-  /// 返回新应用的路径
+  /// macOS 从 ZIP 文件安装（解压 + 复制 .app）。
+  Future<_MacOSInstallResult?> _installMacOSFromZipFile(String zipPath) async {
+    final extractDir = await _extractZipToTemp(zipPath, useSystemUnzip: true);
+    final topLevelEntities = <FileSystemEntity>[];
+    await for (final entity in extractDir.list()) {
+      topLevelEntities.add(entity);
+    }
+    return _installMacOSFromZIP(extractDir, topLevelEntities);
+  }
+
+  /// 从 ZIP 安装（Windows）
   Future<String?> _installFromZIP(String zipPath,
       {bool isWindows = false}) async {
     print('开始解压 ZIP: $zipPath');
@@ -371,51 +452,9 @@ class AppUpdaterService {
     }
 
     print('ZIP 文件大小: ${await zipFile.length()} 字节');
-
-    final tempDir = await getTemporaryDirectory();
-    final extractDir = Directory(path.join(tempDir.path,
-        'update_extract_${DateTime.now().millisecondsSinceEpoch}'));
-
-    if (await extractDir.exists()) {
-      await extractDir.delete(recursive: true);
-    }
-    await extractDir.create();
-
-    print('解压目录: ${extractDir.path}');
+    final extractDir = await _extractZipToTemp(zipPath, useSystemUnzip: false);
 
     try {
-      // 根据平台选择解压方式
-      if (Platform.isWindows) {
-        // Windows 使用 archive 包解压
-        print('开始解压 ZIP 文件（Windows）...');
-        final inputStream = InputFileStream(zipPath);
-        final archive = ZipDecoder().decodeStream(inputStream);
-        extractArchiveToDisk(archive, extractDir.path);
-        await inputStream.close();
-        print('ZIP 解压完成: ${extractDir.path}');
-      } else {
-        // macOS 使用系统 unzip 命令解压（更可靠，能正确处理 macOS 的 ZIP 文件）
-        print('开始解压 ZIP 文件（macOS）...');
-        final unzipResult = await Process.run(
-          'unzip',
-          [
-            '-q', // 静默模式
-            '-o', // 覆盖已存在的文件
-            zipPath,
-            '-d', // 指定解压目录
-            extractDir.path,
-          ],
-        );
-
-        if (unzipResult.exitCode != 0) {
-          print('unzip 命令失败: ${unzipResult.stderr}');
-          throw Exception('解压 ZIP 文件失败: ${unzipResult.stderr}');
-        }
-
-        print('ZIP 解压完成: ${extractDir.path}');
-      }
-
-      // 列出解压后的所有文件和目录（用于调试）
       print('解压目录: ${extractDir.path}');
       print('顶层目录内容:');
       final topLevelEntities = <FileSystemEntity>[];
@@ -425,24 +464,12 @@ class AppUpdaterService {
         print('  - ${path.basename(entity.path)} ($entityType)');
       }
 
-      if (Platform.isWindows) {
-        // Windows: 查找 .exe 文件并复制整个目录
-        return await _installWindowsFromZIP(extractDir, topLevelEntities);
-      } else {
-        // macOS: 查找 .app 文件
-        return await _installMacOSFromZIP(extractDir, topLevelEntities);
-      }
-    } catch (e) {
-      // 重新抛出异常，让上层处理
-      rethrow;
+      return await _installWindowsFromZIP(extractDir, topLevelEntities);
     } finally {
-      // 清理临时文件（延迟删除，确保文件操作完成）
-      // 使用 try-catch 包裹，避免清理失败影响主流程
       try {
         Future.delayed(const Duration(seconds: 2), () async {
           try {
             if (await extractDir.exists()) {
-              // 尝试删除，如果失败则忽略（可能是文件正在使用）
               try {
                 await extractDir.delete(recursive: true);
                 print('临时目录已清理: ${extractDir.path}');
@@ -455,10 +482,46 @@ class AppUpdaterService {
           }
         });
       } catch (e) {
-        // 忽略清理错误
         print('清理临时目录失败（可忽略）: $e');
       }
     }
+  }
+
+  Future<Directory> _extractZipToTemp(
+    String zipPath, {
+    required bool useSystemUnzip,
+  }) async {
+    final tempDir = await getTemporaryDirectory();
+    final extractDir = Directory(path.join(
+      tempDir.path,
+      'update_extract_${DateTime.now().millisecondsSinceEpoch}',
+    ));
+
+    if (await extractDir.exists()) {
+      await extractDir.delete(recursive: true);
+    }
+    await extractDir.create();
+
+    if (useSystemUnzip) {
+      print('开始解压 ZIP 文件（macOS）...');
+      final unzipResult = await Process.run(
+        'unzip',
+        ['-q', '-o', zipPath, '-d', extractDir.path],
+      );
+      if (unzipResult.exitCode != 0) {
+        throw Exception('解压 ZIP 文件失败: ${unzipResult.stderr}');
+      }
+      print('ZIP 解压完成: ${extractDir.path}');
+      return extractDir;
+    }
+
+    print('开始解压 ZIP 文件（Windows）...');
+    final inputStream = InputFileStream(zipPath);
+    final archive = ZipDecoder().decodeStream(inputStream);
+    extractArchiveToDisk(archive, extractDir.path);
+    await inputStream.close();
+    print('ZIP 解压完成: ${extractDir.path}');
+    return extractDir;
   }
 
   /// Windows 安装更新
@@ -478,24 +541,26 @@ class AppUpdaterService {
       return await _installFromZIP(updateFilePath, isWindows: true);
     } else if (updateFilePath.endsWith('.exe')) {
       // 执行安装程序（静默安装）
-      // 注意：.exe 和 .msi 安装程序通常会自动处理重启，返回 null
-      final process = await Process.start(
+      // 这里不能用 detached + await exitCode，会导致状态不可读异常。
+      final result = await Process.run(
         updateFilePath,
         ['/S'], // 静默安装参数
         runInShell: true,
-        mode: ProcessStartMode.detached,
       );
-      await process.exitCode;
+      if (result.exitCode != 0) {
+        throw Exception('EXE 安装失败(exit=${result.exitCode}): ${result.stderr}');
+      }
       return null; // 安装程序会自动处理重启
     } else if (updateFilePath.endsWith('.msi')) {
       // MSI 安装
-      final process = await Process.start(
+      final result = await Process.run(
         'msiexec',
         ['/i', updateFilePath, '/quiet', '/norestart'],
         runInShell: true,
-        mode: ProcessStartMode.detached,
       );
-      await process.exitCode;
+      if (result.exitCode != 0) {
+        throw Exception('MSI 安装失败(exit=${result.exitCode}): ${result.stderr}');
+      }
       return null; // 安装程序会自动处理重启
     } else {
       throw Exception('不支持的 Windows 更新文件格式: $fileExtension');
@@ -602,13 +667,14 @@ class AppUpdaterService {
       final msiPath = msiFile.path;
       print('未找到 .exe，改用 MSI 安装包: $msiPath');
       // 直接静默安装 MSI，安装程序通常会自行处理路径与重启
-      final process = await Process.start(
+      final result = await Process.run(
         'msiexec',
         ['/i', msiPath, '/quiet', '/norestart'],
         runInShell: true,
-        mode: ProcessStartMode.detached,
       );
-      await process.exitCode;
+      if (result.exitCode != 0) {
+        throw Exception('MSI 安装失败(exit=${result.exitCode}): ${result.stderr}');
+      }
       return null;
     }
 
@@ -719,8 +785,7 @@ class AppUpdaterService {
   }
 
   /// macOS 从 ZIP 安装
-  /// 返回新应用的路径
-  Future<String?> _installMacOSFromZIP(
+  Future<_MacOSInstallResult?> _installMacOSFromZIP(
       Directory extractDir, List<FileSystemEntity> topLevelEntities) async {
     print('查找 macOS 应用文件...');
 
@@ -813,14 +878,14 @@ class AppUpdaterService {
         ? Directory(path.join(homeDir, 'Applications', appName))
         : null;
 
-    final installedPath =
-        await _copyAppBundle(appFile, Directory(path.join(applicationsDir.path, appName)),
-            fallbackDir: fallbackDir);
+    final installed = await _copyAppBundle(
+      appFile,
+      Directory(path.join(applicationsDir.path, appName)),
+      fallbackDir: fallbackDir,
+    );
 
-    print('应用安装成功: $installedPath');
-
-    // 返回新应用的路径，用于重启
-    return installedPath;
+    print('应用安装成功: ${installed.path}');
+    return installed;
   }
 
   /// 比较版本号
@@ -974,9 +1039,12 @@ class AppUpdaterService {
     }
   }
 
-  /// 复制 macOS .app 包到目标目录，失败时尝试用户级 Applications
-  Future<String> _copyAppBundle(Directory appFile, Directory primaryTarget,
-      {Directory? fallbackDir}) async {
+  /// 复制 macOS .app 包到目标目录，失败或无权限时尝试用户级 Applications
+  Future<_MacOSInstallResult> _copyAppBundle(
+    Directory appFile,
+    Directory primaryTarget, {
+    Directory? fallbackDir,
+  }) async {
     // 在复制前先终止旧应用进程
     await _terminateAppIfRunning(primaryTarget.path);
     if (fallbackDir != null) {
@@ -1063,10 +1131,17 @@ class AppUpdaterService {
       return null;
     }
 
-    // 优先尝试 /Applications
-    final primaryResult = await attemptCopy(primaryTarget);
-    if (primaryResult != null) {
-      return primaryResult;
+    final canWritePrimary = await _canWriteSystemApplications();
+    if (canWritePrimary) {
+      final primaryResult = await attemptCopy(primaryTarget);
+      if (primaryResult != null) {
+        return _MacOSInstallResult(
+          path: primaryResult,
+          usedUserApplications: false,
+        );
+      }
+    } else {
+      print('跳过 /Applications（无写入权限）');
     }
 
     // 权限或被占用时退回用户目录
@@ -1075,7 +1150,10 @@ class AppUpdaterService {
       final fallbackResult = await attemptCopy(fallbackDir);
       if (fallbackResult != null) {
         print('已复制到用户级 Applications: $fallbackResult');
-        return fallbackResult;
+        return _MacOSInstallResult(
+          path: fallbackResult,
+          usedUserApplications: true,
+        );
       }
     }
 
@@ -1087,10 +1165,20 @@ class AppUpdaterService {
     errorMsg.writeln('3. 磁盘空间不足');
     errorMsg.writeln('');
     errorMsg.writeln('建议解决方案：');
-    errorMsg.writeln('1. 手动将应用拖入 /Applications 目录');
+    errorMsg.writeln('1. 手动将应用拖入 /Applications 或 ~/Applications');
     errorMsg.writeln('2. 使用具有管理员权限的账户重试');
     errorMsg.writeln('3. 检查是否有其他进程占用应用文件');
     
     throw Exception(errorMsg.toString());
   }
+}
+
+class _MacOSInstallResult {
+  final String path;
+  final bool usedUserApplications;
+
+  const _MacOSInstallResult({
+    required this.path,
+    required this.usedUserApplications,
+  });
 }
