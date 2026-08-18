@@ -515,12 +515,29 @@ class AppUpdaterService {
       return extractDir;
     }
 
+    // Windows 优先用系统 tar（Win10+），避免 Dart archive 懒加载流
+    // 在未 await 时被 close 导致解压不完整、找不到 .exe。
     print('开始解压 ZIP 文件（Windows）...');
+    final tarResult = await Process.run(
+      'tar',
+      ['-xf', zipPath, '-C', extractDir.path],
+      runInShell: true,
+    );
+    if (tarResult.exitCode == 0) {
+      print('ZIP 解压完成（tar）: ${extractDir.path}');
+      return extractDir;
+    }
+    print('tar 解压失败，回退 archive 包: ${tarResult.stderr}');
+
     final inputStream = InputFileStream(zipPath);
-    final archive = ZipDecoder().decodeStream(inputStream);
-    extractArchiveToDisk(archive, extractDir.path);
-    await inputStream.close();
-    print('ZIP 解压完成: ${extractDir.path}');
+    try {
+      final archive = ZipDecoder().decodeStream(inputStream);
+      // 必须 await：entries 内容仍依赖 InputFileStream，提前 close 会静默写失败
+      await extractArchiveToDisk(archive, extractDir.path);
+    } finally {
+      await inputStream.close();
+    }
+    print('ZIP 解压完成（archive）: ${extractDir.path}');
     return extractDir;
   }
 
