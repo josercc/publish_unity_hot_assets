@@ -39,6 +39,8 @@ class JenkinsHistoricalTask {
         return 'Unity首包';
       case JenkinsJobParamsService.jobUnityHotAsset:
         return 'Unity打热更';
+      case JenkinsJobParamsService.jobFlutterPatch:
+        return 'Flutter热更';
       case JenkinsJobParamsService.jobWinnerAppBinary:
         return 'App 打包';
       default:

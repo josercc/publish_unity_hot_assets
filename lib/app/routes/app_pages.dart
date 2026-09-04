@@ -2,6 +2,8 @@ import 'package:get/get.dart';
 
 import '../modules/app_packaging/bindings/app_packaging_binding.dart';
 import '../modules/app_packaging/views/app_packaging_view.dart';
+import '../modules/flutter_patch/bindings/flutter_patch_binding.dart';
+import '../modules/flutter_patch/views/flutter_patch_view.dart';
 import '../modules/home/bindings/home_binding.dart';
 import '../modules/home/views/home_view.dart';
 import '../modules/jenkins_servers/bindings/jenkins_servers_binding.dart';
@@ -56,6 +58,11 @@ class AppPages {
       name: _Paths.UNITY_HOT_UPDATE,
       page: () => const UnityHotUpdateView(),
       binding: UnityHotUpdateBinding(),
+    ),
+    GetPage(
+      name: _Paths.FLUTTER_PATCH,
+      page: () => const FlutterPatchView(),
+      binding: FlutterPatchBinding(),
     ),
     GetPage(
       name: _Paths.APP_PACKAGING,

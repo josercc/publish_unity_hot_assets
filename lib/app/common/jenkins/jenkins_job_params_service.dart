@@ -29,6 +29,7 @@ class JenkinsJobParamsService {
   static const jobUnityCache = 'build_unity_cache';
   static const jobUnityFirstPackage = 'build_unity_first_package';
   static const jobUnityHotAsset = 'build_unity_hot_asset';
+  static const jobFlutterPatch = 'publish_flutter_patch';
   static const jobWinnerAppBinary = 'build_winner_app_binary_2.0';
 
   /// 任务用机：首页有选中则用选中机，否则自动分配最闲机。

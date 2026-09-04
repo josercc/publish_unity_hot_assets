@@ -24,6 +24,11 @@ class HomeView extends GetView<HomeController> {
       route: Routes.UNITY_HOT_UPDATE,
     ),
     _HomeFeature(
+      title: 'Flutter热更',
+      icon: Icons.flutter_dash,
+      route: Routes.FLUTTER_PATCH,
+    ),
+    _HomeFeature(
       title: 'App 打包',
       icon: Icons.phone_android,
       route: Routes.APP_PACKAGING,
@@ -65,7 +70,7 @@ class HomeView extends GetView<HomeController> {
                 final rows = (_features.length / crossAxisCount).ceil();
                 final gridHeight = rows * itemHeight + (rows - 1) * 16;
                 return SizedBox(
-                  height: gridHeight.clamp(120, 220),
+                  height: gridHeight.clamp(120, 360),
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(

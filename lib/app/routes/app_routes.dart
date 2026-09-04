@@ -9,6 +9,7 @@ abstract class Routes {
   static const UNITY_IMPORT = _Paths.UNITY_IMPORT;
   static const UNITY_FIRST_PACKAGE = _Paths.UNITY_FIRST_PACKAGE;
   static const UNITY_HOT_UPDATE = _Paths.UNITY_HOT_UPDATE;
+  static const FLUTTER_PATCH = _Paths.FLUTTER_PATCH;
   static const APP_PACKAGING = _Paths.APP_PACKAGING;
   static const JENKINS_WORKSPACE = _Paths.JENKINS_WORKSPACE;
   static const TASK_HISTORY = _Paths.TASK_HISTORY;
@@ -22,6 +23,7 @@ abstract class _Paths {
   static const UNITY_IMPORT = '/unity-import';
   static const UNITY_FIRST_PACKAGE = '/unity-first-package';
   static const UNITY_HOT_UPDATE = '/unity-hot-update';
+  static const FLUTTER_PATCH = '/flutter-patch';
   static const APP_PACKAGING = '/app-packaging';
   static const JENKINS_WORKSPACE = '/jenkins-workspace';
   static const TASK_HISTORY = '/task-history';
