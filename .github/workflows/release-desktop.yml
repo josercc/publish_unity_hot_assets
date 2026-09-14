@@ -1,0 +1,192 @@
+name: Release Desktop
+
+# Builds installable packages for mainstream desktop targets:
+#   macOS   — universal DMG/ZIP (Apple Silicon + Intel)
+#   Windows — x64 ZIP + Inno Setup installer
+#   Linux   — x64 + arm64 tar.gz (+ .deb on amd64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: "Override version name (e.g. 1.0.1). Empty = pubspec.yaml"
+        required: false
+        default: ""
+      build_number:
+        description: "Override build number. Empty = pubspec.yaml / run number"
+        required: false
+        default: ""
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: "3.41.9"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      build_name: ${{ steps.ver.outputs.build_name }}
+      build_number: ${{ steps.ver.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        shell: bash
+        run: |
+          raw="$(grep -E '^version:' pubspec.yaml | head -1 | awk '{print $2}')"
+          name="${raw%%+*}"
+          number="${raw##*+}"
+          [[ "$number" == "$raw" ]] && number="1"
+          input_name="${{ github.event.inputs.build_name }}"
+          input_number="${{ github.event.inputs.build_number }}"
+          if [[ -n "$input_name" ]]; then
+            name="$input_name"
+          fi
+          if [[ -n "$input_number" ]]; then
+            number="$input_number"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            number="${{ github.run_number }}"
+          fi
+          # Tag v1.2.3 → build_name 1.2.3 when not overridden
+          if [[ "${{ github.ref_type }}" == "tag" && -z "$input_name" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            name="$tag"
+          fi
+          echo "build_name=$name" >> "$GITHUB_OUTPUT"
+          echo "build_number=$number" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${name}+${number}"
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      BUILD_NAME: ${{ needs.version.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+      - name: Fetch dependencies
+        run: flutter pub get
+      - name: Package macOS
+        run: |
+          chmod +x scripts/*.sh scripts/lib/*.sh
+          ./scripts/package_macos.sh universal
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      BUILD_NAME: ${{ needs.version.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+      - name: Fetch dependencies
+        run: flutter pub get
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Package Windows x64
+        shell: pwsh
+        run: |
+          .\scripts\package_windows.ps1 -Arch x64 `
+            -BuildName $env:BUILD_NAME `
+            -BuildNumber $env:BUILD_NUMBER
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      BUILD_NAME: ${{ needs.version.outputs.build_name }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            dpkg-dev
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Enable Linux desktop
+        run: flutter config --enable-linux-desktop
+      - name: Fetch dependencies
+        run: flutter pub get
+      - name: Package Linux
+        run: |
+          chmod +x scripts/*.sh scripts/lib/*.sh
+          ./scripts/package_linux.sh "${{ matrix.target }}"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [version, macos, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten packages
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*setup.exe' \) \
+            -exec cp -v {} dist/ \;
+          ls -lah dist
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: UnityHotAssets ${{ needs.version.outputs.build_name }}
+          generate_release_notes: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

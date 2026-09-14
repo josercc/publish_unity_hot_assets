@@ -11,6 +11,7 @@ import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_s
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_task_history_store.dart';
 import 'package:publish_unity_hot_assets/app/modules/jenkins_workspace/jenkins_workspace_args.dart';
+import 'package:publish_unity_hot_assets/app/modules/log_viewer/log_viewer_args.dart';
 import 'package:publish_unity_hot_assets/app/modules/task_history/jenkins_task_history_args.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 
@@ -597,6 +598,12 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
   bool get canOpenJenkinsWorkspace =>
       _selectedServer != null && _selectedServer!.url.trim().isNotEmpty;
 
+  /// 当前任务已有构建号时可查看日志。
+  bool get canDownloadBuildLog =>
+      _selectedServer != null &&
+      _selectedServer!.url.trim().isNotEmpty &&
+      jobRunBuildNumber.value != null;
+
   /// 相对 workspace 根的初始路径（热更 Job 有构建号时进产物目录）。
   String jenkinsWorkspaceInitialPath() {
     final buildNo = jobRunBuildNumber.value;
@@ -623,6 +630,34 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
         buildNumber: jobRunBuildNumber.value,
       ),
     );
+  }
+
+  /// 打开当前任务构建日志在线查看页。
+  void openBuildLog() {
+    final server = _selectedServer;
+    final buildNumber = jobRunBuildNumber.value;
+    if (server == null || server.url.trim().isEmpty) {
+      Get.snackbar('提示', '请先刷新参数或执行任务以确定打包机');
+      return;
+    }
+    if (buildNumber == null) {
+      Get.snackbar('提示', '尚无构建号，请等待进入构建后再查看日志');
+      return;
+    }
+    Get.toNamed(
+      Routes.LOG_VIEWER,
+      arguments: LogViewerArgs(
+        server: server,
+        kind: LogViewerKind.build,
+        jobName: jenkinsJobName,
+        buildNumber: '$buildNumber',
+      ),
+    );
+  }
+
+  /// 兼容旧调用名。
+  Future<void> downloadBuildLog() async {
+    openBuildLog();
   }
 
   Future<void> _pollJobRunOnce() async {

@@ -192,6 +192,12 @@ class JenkinsJobParamsForm extends StatelessWidget {
                     icon: const Icon(Icons.folder_open, size: 18),
                     label: const Text('工作空间'),
                   ),
+                if (controller.canDownloadBuildLog)
+                  OutlinedButton.icon(
+                    onPressed: controller.openBuildLog,
+                    icon: const Icon(Icons.article_outlined, size: 18),
+                    label: const Text('查看日志'),
+                  ),
               ],
             ),
             if (controller.jobRunMessage.value.isNotEmpty) ...[

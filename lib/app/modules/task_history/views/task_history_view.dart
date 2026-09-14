@@ -79,6 +79,9 @@ class TaskHistoryView extends GetView<TaskHistoryController> {
                 canCancel: canCancel,
                 cancelling: cancelling,
                 onRetry: () => controller.retryTask(task),
+                onOpenLog: task.buildNumber != null
+                    ? () => controller.openBuildLog(task)
+                    : null,
                 onCancel: canCancel
                     ? () {
                         // ignore: discarded_futures
@@ -101,6 +104,7 @@ class _TaskHistoryTile extends StatelessWidget {
     required this.canCancel,
     required this.cancelling,
     this.onCancel,
+    this.onOpenLog,
   });
 
   final JenkinsHistoricalTask task;
@@ -108,6 +112,7 @@ class _TaskHistoryTile extends StatelessWidget {
   final bool canCancel;
   final bool cancelling;
   final VoidCallback? onCancel;
+  final VoidCallback? onOpenLog;
 
   @override
   Widget build(BuildContext context) {
@@ -178,6 +183,12 @@ class _TaskHistoryTile extends StatelessWidget {
                           )
                         : const Icon(Icons.cancel_outlined, size: 16),
                     label: Text(cancelling ? '取消中' : '取消'),
+                  ),
+                if (onOpenLog != null)
+                  FilledButton.tonalIcon(
+                    onPressed: onOpenLog,
+                    icon: const Icon(Icons.article_outlined, size: 16),
+                    label: const Text('查看日志'),
                   ),
                 FilledButton.tonalIcon(
                   onPressed: onRetry,

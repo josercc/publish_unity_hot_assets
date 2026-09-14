@@ -50,7 +50,7 @@ description: Implements Flutter/desktop features against the ip_ntfy_agent ntfy 
 - `params` 也可写成 `query`；`body` 也可写成 `data`
 - Agent 在打包机本机发起请求，再把结果推回同一 topic
 - **workspace 目录**（URL 以 `/job/.../ws/.../` 结尾）：Agent 自动改走 `*plain*`，body 为 `{ files, folders, folderName }`，不要自己解析 HTML
-- **文件 / 过大响应**：`bodyOmitted: true`，只有 `fileName` / `folderName` 等元数据；实际下载走 `uploadApk` / `uploadZip`
+- **文件 / 过大响应**：`bodyOmitted: true`，`omitReason` 为 `file` 或 `too_large`；只有元数据。大日志在线查看走 `openAgentLogView` / `openBuildLogView` + `getLogViewChunk`（临时目录只读快照）；完整文件可选 `downloadBuildLog` / `downloadAgentLog`
 
 ### 2. 上传热更 zip
 
@@ -109,6 +109,70 @@ description: Implements Flutter/desktop features against the ip_ntfy_agent ntfy 
 }
 ```
 
+### 6. 在线查看日志（优先）
+
+打开会话时 Agent **复制/下载到临时目录只读快照**，客户端按需分块拉取；**仅用户点击「加载更早」才继续向上请求**，不自动滚动加载。
+
+```json
+{ "action": "openAgentLogView", "requestId": "...", "lines": 10 }
+```
+
+```json
+{
+  "action": "openBuildLogView",
+  "requestId": "...",
+  "jobName": "build_unity_hot_asset",
+  "buildNumber": "123",
+  "lines": 10
+}
+```
+
+```json
+{
+  "action": "getLogViewChunk",
+  "requestId": "...",
+  "sessionId": "lv_...",
+  "lines": 10,
+  "beforeOffset": 12340
+}
+```
+
+```json
+{ "action": "closeLogView", "requestId": "...", "sessionId": "lv_..." }
+```
+
+- 打开时返回 `sessionId` + 末尾一块：`text` / `lineCount` / `startOffset` / `endOffset` / `hasMore` / `size`
+- 离开页面调 `closeLogView`；Agent 空闲约 30 分钟也会清临时目录
+- （可选）`getAgentLog` 仍可拉尾部内联文本
+
+### 7. 下载完整 Agent 运行日志（可选）
+
+```json
+{ "action": "downloadAgentLog", "requestId": "...", "tag": "test" }
+```
+
+- 完整日志上传 Appwrite；`buildId` 缺省 `agent:{timestamp}`；下载后 `deleteLog` 清理
+
+### 8. 下载完整 Jenkins 构建日志（可选）
+
+```json
+{
+  "action": "downloadBuildLog",
+  "requestId": "...",
+  "jobName": "build_unity_hot_asset",
+  "buildNumber": "123",
+  "tag": "test"
+}
+```
+
+- 资源表 `buildId` 为 `log:{jobName}:{buildNumber}`；下载后 `deleteLog` 清理
+
+### 9. 删除临时日志
+
+```json
+{ "action": "deleteLog", "requestId": "...", "buildId": "log:job:123", "tag": "test" }
+```
+
 ## Agent → 客户端（须忽略回环）
 
 订阅时忽略：
@@ -128,7 +192,7 @@ description: Implements Flutter/desktop features against the ip_ntfy_agent ntfy 
 }
 ```
 
-`uploadZip` / `deleteZip` 另带 `action`；失败时 `ok: false` + `error`。
+`uploadZip` / `deleteZip` / 日志类 action 另带 `action`；失败时 `ok: false` + `error`。
 
 ## Appwrite / Jenkins 约定（与 Agent 对齐）
 

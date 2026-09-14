@@ -13,6 +13,7 @@ abstract class Routes {
   static const APP_PACKAGING = _Paths.APP_PACKAGING;
   static const JENKINS_WORKSPACE = _Paths.JENKINS_WORKSPACE;
   static const TASK_HISTORY = _Paths.TASK_HISTORY;
+  static const LOG_VIEWER = _Paths.LOG_VIEWER;
 }
 
 abstract class _Paths {
@@ -27,4 +28,5 @@ abstract class _Paths {
   static const APP_PACKAGING = '/app-packaging';
   static const JENKINS_WORKSPACE = '/jenkins-workspace';
   static const TASK_HISTORY = '/task-history';
+  static const LOG_VIEWER = '/log-viewer';
 }

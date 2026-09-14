@@ -62,22 +62,28 @@ class HomeView extends GetView<HomeController> {
           children: [
             LayoutBuilder(
               builder: (context, constraints) {
-                final crossAxisCount = constraints.maxWidth >= 720 ? 4 : 2;
+                // 宽屏一行排完；窄屏两列，控制行高避免底部功能入口被裁切。
+                final crossAxisCount =
+                    constraints.maxWidth >= 720 ? _features.length : 2;
+                const spacing = 12.0;
+                const maxItemExtent = 96.0;
                 final itemWidth =
-                    (constraints.maxWidth - (crossAxisCount - 1) * 16) /
+                    (constraints.maxWidth - (crossAxisCount - 1) * spacing) /
                         crossAxisCount;
-                final itemHeight = itemWidth / 1.2;
+                final itemHeight =
+                    itemWidth.clamp(64, maxItemExtent).toDouble();
+                final aspectRatio = itemWidth / itemHeight;
                 final rows = (_features.length / crossAxisCount).ceil();
-                final gridHeight = rows * itemHeight + (rows - 1) * 16;
+                final gridHeight = rows * itemHeight + (rows - 1) * spacing;
                 return SizedBox(
-                  height: gridHeight.clamp(120, 360),
+                  height: gridHeight,
                   child: GridView.builder(
                     physics: const NeverScrollableScrollPhysics(),
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: crossAxisCount,
-                      crossAxisSpacing: 16,
-                      mainAxisSpacing: 16,
-                      childAspectRatio: 1.2,
+                      crossAxisSpacing: spacing,
+                      mainAxisSpacing: spacing,
+                      childAspectRatio: aspectRatio,
                     ),
                     itemCount: _features.length,
                     itemBuilder: (context, index) {
@@ -92,7 +98,7 @@ class HomeView extends GetView<HomeController> {
                 );
               },
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Text(
@@ -157,6 +163,7 @@ class HomeView extends GetView<HomeController> {
                           controller.togglePackagingServer(row.server.id),
                       onOpenJenkins: () =>
                           controller.openJenkinsInBrowser(row.server),
+                      onOpenAgentLog: () => controller.openAgentLog(row.server),
                     );
                   },
                 );
@@ -202,16 +209,18 @@ class _FeatureCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 40, color: theme.colorScheme.primary),
-              const SizedBox(height: 12),
+              Icon(icon, size: 26, color: theme.colorScheme.primary),
+              const SizedBox(height: 6),
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.titleMedium?.copyWith(
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -232,6 +241,7 @@ class _PackagingServerTile extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback onOpenJenkins;
+  final VoidCallback onOpenAgentLog;
 
   const _PackagingServerTile({
     required this.name,
@@ -242,6 +252,7 @@ class _PackagingServerTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onOpenJenkins,
+    required this.onOpenAgentLog,
   });
 
   Color get _workloadColor {
@@ -353,6 +364,12 @@ class _PackagingServerTile extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+            IconButton(
+              tooltip: '查看 Agent 日志',
+              onPressed: onOpenAgentLog,
+              icon: const Icon(Icons.article_outlined),
+              visualDensity: VisualDensity.compact,
             ),
             IconButton(
               tooltip: '打开 Jenkins（自动登录）',

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=UnityHotAssets
+Comment=Unity hot assets publish client
+Exec=publish_unity_hot_assets
+Icon=com.winner.publishUnityHotAssets
+Terminal=false
+Type=Application
+Categories=Development;
+StartupWMClass=publish_unity_hot_assets

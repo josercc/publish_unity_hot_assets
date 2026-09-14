@@ -8,6 +8,7 @@ import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_se
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_browser_launcher.dart';
 import 'package:publish_unity_hot_assets/app/common/ntfy/jenkins_workload_service.dart';
+import 'package:publish_unity_hot_assets/app/modules/log_viewer/log_viewer_args.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 
 class PackagingServerRow {
@@ -41,6 +42,17 @@ class HomeController extends GetxController {
     } catch (e) {
       SmartDialog.showToast('打开 Jenkins 失败: $e');
     }
+  }
+
+  /// 打开打包机 Agent 运行日志在线查看页。
+  void openAgentLog(PackagingServer server) {
+    Get.toNamed(
+      Routes.LOG_VIEWER,
+      arguments: LogViewerArgs(
+        server: server,
+        kind: LogViewerKind.agent,
+      ),
+    );
   }
 
   /// Appwrite 会话检测定时任务

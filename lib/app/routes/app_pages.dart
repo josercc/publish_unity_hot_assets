@@ -10,6 +10,8 @@ import '../modules/jenkins_servers/bindings/jenkins_servers_binding.dart';
 import '../modules/jenkins_servers/views/jenkins_servers_view.dart';
 import '../modules/jenkins_workspace/bindings/jenkins_workspace_binding.dart';
 import '../modules/jenkins_workspace/views/jenkins_workspace_view.dart';
+import '../modules/log_viewer/bindings/log_viewer_binding.dart';
+import '../modules/log_viewer/views/log_viewer_view.dart';
 import '../modules/login/bindings/login_binding.dart';
 import '../modules/login/views/login_view.dart';
 import '../modules/task_history/bindings/task_history_binding.dart';
@@ -78,6 +80,11 @@ class AppPages {
       name: _Paths.TASK_HISTORY,
       page: () => const TaskHistoryView(),
       binding: TaskHistoryBinding(),
+    ),
+    GetPage(
+      name: _Paths.LOG_VIEWER,
+      page: () => const LogViewerView(),
+      binding: LogViewerBinding(),
     ),
   ];
 }

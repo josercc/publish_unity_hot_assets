@@ -3,7 +3,9 @@ import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.da
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_historical_task.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_service.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
+import 'package:publish_unity_hot_assets/app/modules/log_viewer/log_viewer_args.dart';
 import 'package:publish_unity_hot_assets/app/modules/task_history/jenkins_task_history_args.dart';
+import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
 
 class TaskHistoryController extends GetxController {
   final tasks = <JenkinsHistoricalTask>[].obs;
@@ -73,6 +75,29 @@ class TaskHistoryController extends GetxController {
   /// 把该任务参数带回任务页表单。
   void retryTask(JenkinsHistoricalTask task) {
     Get.back(result: Map<String, String>.from(task.parameters));
+  }
+
+  /// 打开构建日志在线查看页。
+  void openBuildLog(JenkinsHistoricalTask task) {
+    final srv = server;
+    final buildNumber = task.buildNumber;
+    if (srv == null) {
+      Get.snackbar('无法查看日志', '未指定打包机');
+      return;
+    }
+    if (buildNumber == null) {
+      Get.snackbar('无法查看日志', '该任务尚无构建号');
+      return;
+    }
+    Get.toNamed(
+      Routes.LOG_VIEWER,
+      arguments: LogViewerArgs(
+        server: srv,
+        kind: LogViewerKind.build,
+        jobName: task.jobName,
+        buildNumber: '$buildNumber',
+      ),
+    );
   }
 
   /// 取消排队中或打包中的任务。

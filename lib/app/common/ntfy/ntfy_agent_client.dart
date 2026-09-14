@@ -179,6 +179,154 @@ class NtfyAgentClient {
     );
   }
 
+  /// 拉取打包机 Agent 运行日志末尾（`.run/agent.log`）。
+  Future<NtfyProxyResponse> getAgentLog({
+    required String topic,
+    int lines = 500,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'getAgentLog',
+      fields: {
+        'lines': lines,
+      },
+      timeout: timeout,
+    );
+  }
+
+  /// 打开 Agent 日志在线查看会话（Agent 复制到临时快照并返回末尾一块）。
+  Future<NtfyProxyResponse> openAgentLogView({
+    required String topic,
+    int lines = 10,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'openAgentLogView',
+      fields: {
+        'lines': lines,
+      },
+      timeout: timeout,
+    );
+  }
+
+  /// 打开 Jenkins 构建日志在线查看会话（先拉 consoleText 到临时快照）。
+  Future<NtfyProxyResponse> openBuildLogView({
+    required String topic,
+    required String jobName,
+    required String buildNumber,
+    int lines = 10,
+    Duration timeout = const Duration(minutes: 10),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'openBuildLogView',
+      fields: {
+        'jobName': jobName,
+        'buildNumber': buildNumber,
+        'lines': lines,
+      },
+      timeout: timeout,
+    );
+  }
+
+  /// 从只读快照继续向上取更早日志块。
+  Future<NtfyProxyResponse> getLogViewChunk({
+    required String topic,
+    required String sessionId,
+    required int beforeOffset,
+    int lines = 10,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'getLogViewChunk',
+      fields: {
+        'sessionId': sessionId,
+        'beforeOffset': beforeOffset,
+        'lines': lines,
+      },
+      timeout: timeout,
+    );
+  }
+
+  /// 关闭日志查看会话并删除临时快照。
+  Future<NtfyProxyResponse> closeLogView({
+    required String topic,
+    required String sessionId,
+    Duration timeout = const Duration(seconds: 30),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'closeLogView',
+      fields: {
+        'sessionId': sessionId,
+      },
+      timeout: timeout,
+    );
+  }
+
+  /// 请求 Agent 将完整 agent.log 上传 Appwrite，回传 downloadUrl。
+  Future<NtfyProxyResponse> downloadAgentLog({
+    required String topic,
+    String? buildId,
+    String? tag,
+    void Function(NtfyProgressEvent event)? onProgress,
+    Duration timeout = const Duration(minutes: 10),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'downloadAgentLog',
+      fields: {
+        if (buildId != null && buildId.isNotEmpty) 'buildId': buildId,
+        if (tag != null && tag.isNotEmpty) 'tag': tag,
+      },
+      onProgress: onProgress,
+      timeout: timeout,
+    );
+  }
+
+  /// 请求 Agent 拉取 Jenkins consoleText 并上传 Appwrite。
+  Future<NtfyProxyResponse> downloadBuildLog({
+    required String topic,
+    required String jobName,
+    required String buildNumber,
+    String? tag,
+    void Function(NtfyProgressEvent event)? onProgress,
+    Duration timeout = const Duration(minutes: 30),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'downloadBuildLog',
+      fields: {
+        'jobName': jobName,
+        'buildNumber': buildNumber,
+        if (tag != null && tag.isNotEmpty) 'tag': tag,
+      },
+      onProgress: onProgress,
+      timeout: timeout,
+    );
+  }
+
+  /// 删除临时日志资源（Agent / 构建日志下载产生）。
+  Future<NtfyProxyResponse> deleteLog({
+    required String topic,
+    required String buildId,
+    String? tag,
+    Duration timeout = const Duration(seconds: 60),
+  }) {
+    return sendAction(
+      topic: topic,
+      action: 'deleteLog',
+      fields: {
+        'buildId': buildId,
+        if (tag != null && tag.isNotEmpty) 'tag': tag,
+      },
+      timeout: timeout,
+    );
+  }
+
   /// 向 [topic] 发送带 `action` 的 Agent 请求（uploadZip / deleteZip 等）。
   Future<NtfyProxyResponse> sendAction({
     required String topic,
@@ -319,8 +467,10 @@ class _NtfyTopicSession {
 
   final _pending = <String, Completer<NtfyProxyResponse>>{};
   final _progressHandlers = <String, void Function(NtfyProgressEvent event)>{};
-  /// 已收到过 progress 的 requestId（用于忽略重复旧 Agent 的抢跑失败响应）。
+  /// 已收到过 progress 的 requestId（用于忽略 zip/apk 多 Agent 抢跑失败响应）。
   final _seenProgress = <String>{};
+  /// zip/apk 在 progress 后收到的失败包（超时后用于给出真实错误而非笼统 timeout）。
+  final _deferredErrors = <String, Map<String, dynamic>>{};
   final _http = HttpClient();
 
   StreamSubscription<String>? _subscription;
@@ -447,6 +597,8 @@ class _NtfyTopicSession {
 
       if (type == 'progress') {
         _seenProgress.add(requestId);
+        // 仍在推进进度，说明另一台 Agent 可能在干活，清掉暂存失败。
+        _deferredErrors.remove(requestId);
         final handler = _progressHandlers[requestId];
         if (handler != null) {
           handler(NtfyProgressEvent.fromJson(map));
@@ -455,19 +607,26 @@ class _NtfyTopicSession {
       }
       if (type != 'response') return;
 
-      // 同 topic 若残留旧 Agent，会先用错误 URL 回 404；新 Agent 已在上传并推
-      // progress。此时忽略失败响应，继续等成功包，避免 Flutter 误报失败。
+      // 同 topic 若残留旧 Agent，zip/apk 会先回失败；新 Agent 已在上传并推
+      // progress。仅对这两类 action 暂存失败、继续等成功包。
+      // downloadAgentLog / downloadBuildLog 只有一台 Agent，失败必须立刻抛出，
+      // 否则会一直停在 0%「正在上传」直到超时。
       if (map['ok'] != true && _seenProgress.contains(requestId)) {
-        // ignore: avoid_print
-        print(
-          '[ntfy] ignore error after progress requestId=$requestId '
-          'error=${map['error']}',
-        );
-        return;
+        final action = map['action']?.toString() ?? '';
+        if (action == 'uploadZip' || action == 'uploadApk') {
+          _deferredErrors[requestId] = Map<String, dynamic>.from(map);
+          // ignore: avoid_print
+          print(
+            '[ntfy] defer error after progress requestId=$requestId '
+            'action=$action error=${map['error']}',
+          );
+          return;
+        }
       }
 
       _progressHandlers.remove(requestId);
       _seenProgress.remove(requestId);
+      _deferredErrors.remove(requestId);
       final completer = _pending.remove(requestId);
       if (completer == null || completer.isCompleted) return;
       completer.complete(NtfyProxyResponse.fromJson(map));
@@ -497,6 +656,10 @@ class _NtfyTopicSession {
           _pending.remove(requestId);
           _progressHandlers.remove(requestId);
           _seenProgress.remove(requestId);
+          final deferred = _deferredErrors.remove(requestId);
+          if (deferred != null) {
+            return NtfyProxyResponse.fromJson(deferred);
+          }
           throw TimeoutException(
             'ntfy proxy timeout for $requestId (topic=$topic)',
             timeout,
@@ -507,6 +670,7 @@ class _NtfyTopicSession {
       _pending.remove(requestId);
       _progressHandlers.remove(requestId);
       _seenProgress.remove(requestId);
+      _deferredErrors.remove(requestId);
       rethrow;
     }
   }
@@ -516,6 +680,7 @@ class _NtfyTopicSession {
     _pending.clear();
     _progressHandlers.clear();
     _seenProgress.clear();
+    _deferredErrors.clear();
     for (final completer in pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(error);
