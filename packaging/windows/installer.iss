@@ -1,8 +1,8 @@
-# Inno Setup script for Unity Hot Assets Windows installer.
-# Compile with: iscc packaging\windows\installer.iss
-#
-# Expected layout (from CI / package_windows.ps1):
-#   build\windows\x64\runner\Release\*
+; Inno Setup script for Unity Hot Assets Windows installer.
+; Compile with: iscc packaging\windows\installer.iss
+;
+; Expected layout (from CI / package_windows.ps1):
+;   build\windows\x64\runner\Release\*
 
 #define MyAppName "UnityHotAssets"
 #define MyAppId "com.winner.publishUnityHotAssets"

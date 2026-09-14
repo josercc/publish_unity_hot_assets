@@ -41,18 +41,8 @@ function Invoke-Flutter {
 }
 
 Write-Host "==> Building Windows release ($Arch, $BuildName+$BuildNumber)"
-$targetPlatform = if ($Arch -eq "arm64") { "windows-arm64" } else { "windows-x64" }
-
-$built = $false
-try {
-  Invoke-Flutter build windows --release --build-name=$BuildName --build-number=$BuildNumber --target-platform=$targetPlatform
-  $built = $true
-} catch {
-  Write-Host "==> --target-platform not accepted; building host architecture"
-}
-if (-not $built) {
-  Invoke-Flutter build windows --release --build-name=$BuildName --build-number=$BuildNumber
-}
+# flutter build windows has no --target-platform; build for the host arch.
+Invoke-Flutter build windows --release --build-name=$BuildName --build-number=$BuildNumber
 
 $candidates = @(
   (Join-Path $Root "build\windows\$Arch\runner\Release"),

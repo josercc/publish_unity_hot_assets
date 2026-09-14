@@ -3,7 +3,8 @@ name: Release Desktop
 # Builds installable packages for mainstream desktop targets:
 #   macOS   — universal DMG/ZIP (Apple Silicon + Intel)
 #   Windows — x64 ZIP + Inno Setup installer
-#   Linux   — x64 + arm64 tar.gz (+ .deb on amd64)
+#   Linux   — x64 tar.gz + .deb
+# Note: official Flutter Linux SDK has no arm64 builds, so CI only packs linux-x64.
 
 on:
   workflow_dispatch:
@@ -125,15 +126,7 @@ jobs:
 
   linux:
     needs: version
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x64
-          - os: ubuntu-24.04-arm
-            target: linux-arm64
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     env:
       BUILD_NAME: ${{ needs.version.outputs.build_name }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
@@ -145,11 +138,13 @@ jobs:
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config \
             libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev \
             dpkg-dev
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
+          architecture: x64
           cache: true
       - name: Enable Linux desktop
         run: flutter config --enable-linux-desktop
@@ -158,11 +153,11 @@ jobs:
       - name: Package Linux
         run: |
           chmod +x scripts/*.sh scripts/lib/*.sh
-          ./scripts/package_linux.sh "${{ matrix.target }}"
+          ./scripts/package_linux.sh linux-x64
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.target }}
+          name: linux-x64
           path: dist/*
           if-no-files-found: error
 
