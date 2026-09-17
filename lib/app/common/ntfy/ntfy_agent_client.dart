@@ -10,7 +10,15 @@ import 'package:publish_unity_hot_assets/app/common/appwrite/appwrite_config.dar
 /// 每个 topic 只维持一条订阅流，按 `requestId` 多路复用，避免并行开多条
 /// SSE 导致 Dio/连接池收不到 Agent 回包。
 class NtfyAgentClient {
-  NtfyAgentClient({Dio? dio}) : _dio = dio ?? Dio();
+  NtfyAgentClient({Dio? dio})
+      : _dio = dio ??
+            Dio(
+              BaseOptions(
+                connectTimeout: const Duration(seconds: 15),
+                sendTimeout: const Duration(seconds: 15),
+                receiveTimeout: const Duration(seconds: 15),
+              ),
+            );
 
   final Dio _dio;
   final _sessions = <String, _NtfyTopicSession>{};
@@ -89,6 +97,11 @@ class NtfyAgentClient {
       if (body != null) 'body': body,
     };
 
+    // ignore: avoid_print
+    print(
+      '[JenkinsRoute] ntfy proxyHttp '
+      'topic=$topic requestId=$requestId $method $url',
+    );
     await session.ensureListening();
     return session.send(requestId: requestId, payload: payload, timeout: timeout);
   }
@@ -347,6 +360,11 @@ class NtfyAgentClient {
       ...fields,
     };
 
+    // ignore: avoid_print
+    print(
+      '[JenkinsRoute] ntfy sendAction '
+      'topic=$topic requestId=$requestId action=$action fields=$fields',
+    );
     await session.ensureListening();
     return session.send(
       requestId: requestId,
@@ -394,6 +412,12 @@ class NtfyAgentClient {
           ),
         );
         _lastPublishAt = DateTime.now();
+        // ignore: avoid_print
+        print(
+          '[ntfy] publish ok topic=$topic '
+          'requestId=${payload['requestId']} '
+          'action=${payload['action'] ?? payload['method'] ?? '?'}',
+        );
         return;
       } on DioException catch (e) {
         lastError = e;
@@ -472,11 +496,23 @@ class _NtfyTopicSession {
   /// zip/apk 在 progress 后收到的失败包（超时后用于给出真实错误而非笼统 timeout）。
   final _deferredErrors = <String, Map<String, dynamic>>{};
   final _http = HttpClient();
+  /// poll 兜底用独立短连接客户端，避免和 SSE 长连接互相干扰。
+  final _pollDio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 10),
+      sendTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+    ),
+  );
 
   StreamSubscription<String>? _subscription;
   Completer<void>? _ready;
   bool _closed = false;
   bool _connecting = false;
+  bool _polling = false;
+  Timer? _pollTimer;
+  /// 等待回包时，从该 unix 秒起 poll 缓存消息（防 SSE 在蜂窝网被缓冲）。
+  int? _pollSinceUnix;
   var _buffer = '';
 
   Future<void> ensureListening() async {
@@ -497,13 +533,18 @@ class _NtfyTopicSession {
     try {
       await _tearDownStream();
 
-      final uri = Uri.parse('$baseUrl/$topic/json');
+      // since=latest：只跟随后续消息，减少历史包干扰
+      final uri = Uri.parse('$baseUrl/$topic/json').replace(
+        queryParameters: const {'since': 'latest'},
+      );
       final request = await _http.getUrl(uri);
       authHeaders.forEach(request.headers.set);
       request.headers.set(
         HttpHeaders.acceptHeader,
         'application/x-ndjson, application/json',
       );
+      // 尽量避免中间层对长连接做缓冲
+      request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
 
       final response =
           await request.close().timeout(const Duration(seconds: 15));
@@ -568,6 +609,8 @@ class _NtfyTopicSession {
       final eventType = event['event']?.toString();
 
       if (eventType == 'open') {
+        // ignore: avoid_print
+        print('[ntfy] stream open $topic');
         if (_ready != null && !_ready!.isCompleted) {
           _ready!.complete();
         }
@@ -596,6 +639,8 @@ class _NtfyTopicSession {
       if (requestId == null || requestId.isEmpty) return;
 
       if (type == 'progress') {
+        // ignore: avoid_print
+        print('[ntfy] progress requestId=$requestId');
         _seenProgress.add(requestId);
         // 仍在推进进度，说明另一台 Agent 可能在干活，清掉暂存失败。
         _deferredErrors.remove(requestId);
@@ -606,6 +651,12 @@ class _NtfyTopicSession {
         return;
       }
       if (type != 'response') return;
+
+      // ignore: avoid_print
+      print(
+        '[ntfy] response requestId=$requestId ok=${map['ok']} '
+        'status=${map['statusCode']} error=${map['error']}',
+      );
 
       // 同 topic 若残留旧 Agent，zip/apk 会先回失败；新 Agent 已在上传并推
       // progress。仅对这两类 action 暂存失败、继续等成功包。
@@ -628,11 +679,88 @@ class _NtfyTopicSession {
       _seenProgress.remove(requestId);
       _deferredErrors.remove(requestId);
       final completer = _pending.remove(requestId);
-      if (completer == null || completer.isCompleted) return;
+      if (completer == null || completer.isCompleted) {
+        // ignore: avoid_print
+        print(
+          '[ntfy] response ignored (no pending) requestId=$requestId '
+          'pending=${_pending.length}',
+        );
+        return;
+      }
       completer.complete(NtfyProxyResponse.fromJson(map));
+      _maybeStopPolling();
     } catch (e) {
       // ignore: avoid_print
       print('[ntfy] parse line failed: $e line=$trimmed');
+    }
+  }
+
+  void _ensurePolling() {
+    if (_pollTimer != null) return;
+    _pollSinceUnix ??=
+        DateTime.now().millisecondsSinceEpoch ~/ 1000 - 5;
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_pollCachedOnce());
+    });
+    // 立刻拉一次，不等第一个周期
+    unawaited(_pollCachedOnce());
+  }
+
+  void _maybeStopPolling() {
+    if (_pending.isNotEmpty) return;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pollSinceUnix = null;
+  }
+
+  Future<void> _pollCachedOnce() async {
+    if (_closed || _pending.isEmpty || _polling) return;
+    final since = _pollSinceUnix;
+    if (since == null) return;
+    _polling = true;
+    try {
+      final uri = Uri.parse('$baseUrl/$topic/json').replace(
+        queryParameters: {
+          'poll': '1',
+          'since': '$since',
+        },
+      );
+      final res = await _pollDio.get<String>(
+        uri.toString(),
+        options: Options(
+          headers: {
+            ...authHeaders,
+            HttpHeaders.acceptHeader: 'application/x-ndjson, application/json',
+          },
+          responseType: ResponseType.plain,
+          validateStatus: (status) => status != null && status < 500,
+        ),
+      );
+      if (res.statusCode == null ||
+          res.statusCode! < 200 ||
+          res.statusCode! >= 300) {
+        // ignore: avoid_print
+        print(
+          '[ntfy] poll failed topic=$topic status=${res.statusCode} '
+          'body=${res.data}',
+        );
+        return;
+      }
+      final body = res.data ?? '';
+      if (body.trim().isEmpty) return;
+      // ignore: avoid_print
+      print(
+        '[ntfy] poll hit topic=$topic bytes=${body.length} '
+        'pending=${_pending.length}',
+      );
+      for (final line in body.split('\n')) {
+        _handleLine(line);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[ntfy] poll error topic=$topic: $e');
+    } finally {
+      _polling = false;
     }
   }
 
@@ -649,7 +777,15 @@ class _NtfyTopicSession {
     }
 
     try {
+      // 略早于 publish，覆盖 Agent 极快回包
+      _pollSinceUnix = DateTime.now().millisecondsSinceEpoch ~/ 1000 - 2;
       await publish(topic, payload);
+      _ensurePolling();
+      // ignore: avoid_print
+      print(
+        '[ntfy] waiting response requestId=$requestId '
+        'timeout=${timeout.inSeconds}s pending=${_pending.length}',
+      );
       return await completer.future.timeout(
         timeout,
         onTimeout: () {
@@ -657,9 +793,15 @@ class _NtfyTopicSession {
           _progressHandlers.remove(requestId);
           _seenProgress.remove(requestId);
           final deferred = _deferredErrors.remove(requestId);
+          _maybeStopPolling();
           if (deferred != null) {
             return NtfyProxyResponse.fromJson(deferred);
           }
+          // ignore: avoid_print
+          print(
+            '[ntfy] timeout requestId=$requestId topic=$topic '
+            '— 若 Agent 未运行或 topic 与打包机 IP 不一致会一直等不到回包',
+          );
           throw TimeoutException(
             'ntfy proxy timeout for $requestId (topic=$topic)',
             timeout,
@@ -671,6 +813,7 @@ class _NtfyTopicSession {
       _progressHandlers.remove(requestId);
       _seenProgress.remove(requestId);
       _deferredErrors.remove(requestId);
+      _maybeStopPolling();
       rethrow;
     }
   }
@@ -681,6 +824,7 @@ class _NtfyTopicSession {
     _progressHandlers.clear();
     _seenProgress.clear();
     _deferredErrors.clear();
+    _maybeStopPolling();
     for (final completer in pending.values) {
       if (!completer.isCompleted) {
         completer.completeError(error);
@@ -714,9 +858,13 @@ class _NtfyTopicSession {
 
   void close() {
     _closed = true;
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _pollSinceUnix = null;
     _failAll(StateError('ntfy session closed: $topic'));
     unawaited(_tearDownStream());
     _http.close(force: true);
+    _pollDio.close(force: true);
   }
 }
 

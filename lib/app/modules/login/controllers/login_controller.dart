@@ -46,7 +46,19 @@ class LoginController extends GetxController {
   void onInit() {
     super.onInit();
     _loadSavedAppwriteCredentials();
+    _loadIntranetMode();
     initLocalLoginInfo(curEnv.value);
+  }
+
+  Future<void> _loadIntranetMode() async {
+    final enabled = await BusinessSessionBootstrap.loadIntranetJenkinsMode();
+    isIntranetJenkinsMode.value = enabled;
+  }
+
+  /// 切换内网模式并立即持久化，避免异步 init 覆盖或未登录就退出丢失。
+  Future<void> setIntranetJenkinsMode(bool enabled) async {
+    isIntranetJenkinsMode.value = enabled;
+    await BusinessSessionBootstrap.saveIntranetJenkinsMode(enabled);
   }
 
   @override
@@ -190,6 +202,10 @@ class LoginController extends GetxController {
       appwriteUsername: userName,
       appwritePassword: password,
     );
+    // 无论业务配置是否写成功，都强制固化当前内网开关
+    await BusinessSessionBootstrap.saveIntranetJenkinsMode(
+      isIntranetJenkinsMode.value,
+    );
     await BusinessSessionBootstrap.restore();
 
     Get.offAllNamed(Routes.HOME);
@@ -306,7 +322,9 @@ class LoginController extends GetxController {
 
         jenkinsServers.assignAll(useServers);
         selectedJenkinsServerId.value = useSelected;
-        isIntranetJenkinsMode.value = loginConfig.isIntranetJenkinsMode;
+        // 内网开关以独立 key 为准，避免旧 LoginConfig / 异步竞态盖掉用户选择
+        isIntranetJenkinsMode.value =
+            await BusinessSessionBootstrap.loadIntranetJenkinsMode(sp);
 
         final server = selectedServer ??
             (jenkinsServers.isNotEmpty ? jenkinsServers.first : null);
@@ -325,7 +343,7 @@ class LoginController extends GetxController {
             jenkinsPassword: loginConfig.jenkinsPassword,
             jenkinsServers: jenkinsServers.toList(),
             selectedJenkinsServerId: selectedJenkinsServerId.value,
-            isIntranetJenkinsMode: loginConfig.isIntranetJenkinsMode,
+            isIntranetJenkinsMode: isIntranetJenkinsMode.value,
           );
           await sp.setString(
             environment.toString(),

@@ -225,6 +225,8 @@ class JenkinsWorkspaceService {
     final savePath = p.join(saveDirectory, fileName);
 
     if (_useDirectJenkins) {
+      // ignore: avoid_print
+      print('[JenkinsRoute] 内网直连 DOWNLOAD APK $apkUrl');
       onProgress?.call(
         phase: 'downloading',
         message: '正在从 Jenkins 直接下载 APK...',
@@ -244,6 +246,8 @@ class JenkinsWorkspaceService {
       return savePath;
     }
 
+    // ignore: avoid_print
+    print('[JenkinsRoute] ntfy uploadApk topic=$topic path=$apkUrl');
     onProgress?.call(
       phase: 'uploading',
       message: '正在请求打包机上传 APK 到 Appwrite...',
@@ -600,6 +604,11 @@ class JenkinsWorkspaceService {
     Duration timeout = const Duration(seconds: 45),
   }) async {
     if (!_useDirectJenkins) {
+      // ignore: avoid_print
+      print(
+        '[JenkinsRoute] ntfy topic=$topic $method $url '
+        '(server=$serverUrl)',
+      );
       return _client.proxyHttp(
         topic: topic,
         method: method,
@@ -611,6 +620,8 @@ class JenkinsWorkspaceService {
       );
     }
 
+    // ignore: avoid_print
+    print('[JenkinsRoute] 内网直连 $method $url');
     final res = await global.dio.request(
       url,
       data: body,

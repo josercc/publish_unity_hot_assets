@@ -1731,6 +1731,8 @@ class DownloadZipUrlTask extends Task<String> {
         final artifactDir = _jenkinsArtifactPlatformDir();
         final directZipUrl =
             '${packagingServer.url}/job/build_unity_hot_asset/ws/HotUpdate/$buildNumber/$artifactDir/UploadAssets/*zip*/UploadAssets.zip';
+        // ignore: avoid_print
+        print('[JenkinsRoute] 内网直连 DOWNLOAD hot_update.zip $directZipUrl');
         final authHeader = _basicAuth(
           packagingServer.userName,
           packagingServer.password,
@@ -1781,6 +1783,11 @@ class DownloadZipUrlTask extends Task<String> {
         throw '无法从打包机 URL 解析 ntfy topic: ${packagingServer.url}';
       }
 
+      // ignore: avoid_print
+      print(
+        '[JenkinsRoute] ntfy uploadZip topic=$topic '
+        'buildId=$buildNumber platform=$platform',
+      );
       final client = NtfyAgentClient();
       try {
         final uploadRes = await client.uploadZip(

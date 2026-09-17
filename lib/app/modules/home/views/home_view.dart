@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/common/ntfy/jenkins_workload_service.dart';
 import 'package:publish_unity_hot_assets/app/modules/home/controllers/home_controller.dart';
 import 'package:publish_unity_hot_assets/app/routes/app_pages.dart';
@@ -60,6 +61,28 @@ class HomeView extends GetView<HomeController> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Obx(() {
+              final intranet = global.isIntranetJenkinsModeRx.value;
+              return Card(
+                margin: EdgeInsets.zero,
+                child: SwitchListTile(
+                  title: Text(intranet ? '内网直连' : 'ntfy 消息'),
+                  subtitle: Text(
+                    intranet
+                        ? '当前直接请求打包机 Jenkins（需连内网）'
+                        : '当前经 ntfy 中转访问打包机',
+                  ),
+                  secondary: Icon(
+                    intranet ? Icons.lan_outlined : Icons.cloud_outlined,
+                  ),
+                  value: intranet,
+                  onChanged: (value) async {
+                    await controller.setIntranetJenkinsMode(value);
+                  },
+                ),
+              );
+            }),
+            const SizedBox(height: 16),
             LayoutBuilder(
               builder: (context, constraints) {
                 // 宽屏一行排完；窄屏两列，控制行高避免底部功能入口被裁切。

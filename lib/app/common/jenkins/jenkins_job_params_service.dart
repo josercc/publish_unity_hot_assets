@@ -652,6 +652,11 @@ println JsonOutput.toJson(list)
     Duration timeout = const Duration(seconds: 45),
   }) async {
     if (!_useDirectJenkins) {
+      // ignore: avoid_print
+      print(
+        '[JenkinsRoute] ntfy topic=$topic $method $url '
+        '(server=$serverUrl)',
+      );
       return _client.proxyHttp(
         topic: topic,
         method: method,
@@ -663,6 +668,8 @@ println JsonOutput.toJson(list)
       );
     }
 
+    // ignore: avoid_print
+    print('[JenkinsRoute] 内网直连 $method $url');
     final res = await global.dio.request(
       url,
       data: body,

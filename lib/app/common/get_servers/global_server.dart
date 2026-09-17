@@ -12,7 +12,11 @@ class GlobalServer extends GetxService {
   DateTime? tokenExpireTime; // Token过期时间
   String? gmallUrl;
   Environment? currentEnvironment;
-  bool isIntranetJenkinsMode = true;
+  final RxBool isIntranetJenkinsModeRx = true.obs;
+
+  /// 是否内网直连 Jenkins（false 则走 ntfy）。
+  bool get isIntranetJenkinsMode => isIntranetJenkinsModeRx.value;
+  set isIntranetJenkinsMode(bool value) => isIntranetJenkinsModeRx.value = value;
 
   JenkinsApi? jenkinsApi;
 

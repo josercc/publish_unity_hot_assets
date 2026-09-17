@@ -202,6 +202,8 @@ class JenkinsWorkloadService {
     Map<String, String>? params,
   }) async {
     if (!_useDirectJenkins) {
+      // ignore: avoid_print
+      print('[JenkinsRoute] ntfy topic=$topic $method $url');
       return _client.proxyHttp(
         topic: topic,
         method: method,
@@ -211,6 +213,8 @@ class JenkinsWorkloadService {
       );
     }
 
+    // ignore: avoid_print
+    print('[JenkinsRoute] 内网直连 $method $url');
     final res = await global.dio.request(
       url,
       queryParameters: params,

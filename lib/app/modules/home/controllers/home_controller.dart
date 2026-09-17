@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/appwrite_auth_service.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server.dart';
 import 'package:publish_unity_hot_assets/app/common/appwrite/packaging_server_service.dart';
+import 'package:publish_unity_hot_assets/app/common/business_session_bootstrap.dart';
 import 'package:publish_unity_hot_assets/app/common/get_servers/global_server.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_browser_launcher.dart';
 import 'package:publish_unity_hot_assets/app/common/ntfy/jenkins_workload_service.dart';
@@ -114,6 +115,16 @@ class HomeController extends GetxController {
     packagingRows.clear();
     await appwriteAuth.logout();
     Get.offAllNamed(Routes.LOGIN);
+  }
+
+  /// 切换内网 / ntfy 模式（立即持久化，并刷新打包机负载查询）。
+  Future<void> setIntranetJenkinsMode(bool enabled) async {
+    await BusinessSessionBootstrap.saveIntranetJenkinsMode(enabled);
+    // 等当前刷新结束，再按新模式重查
+    while (_refreshingServers) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    await refreshPackagingServers();
   }
 
   /// 从 Appwrite 拉取 active 打包机，再经 ntfy 查 Jenkins 工作状态。

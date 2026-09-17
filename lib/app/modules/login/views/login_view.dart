@@ -40,7 +40,7 @@ class LoginView extends GetView<LoginController> {
                     subtitle: const Text('开启后直接请求 Jenkins，不再走中转'),
                     value: controller.isIntranetJenkinsMode.value,
                     onChanged: (value) {
-                      controller.isIntranetJenkinsMode.value = value;
+                      controller.setIntranetJenkinsMode(value);
                     },
                   ),
                 ),

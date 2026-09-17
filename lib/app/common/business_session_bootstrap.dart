@@ -13,6 +13,54 @@ class BusinessSessionBootstrap {
   static const lastEnvironmentKey = 'last_environment';
   static const sharedJenkinsKey = 'shared_jenkins_servers';
 
+  /// 内网/ntfy 模式独立存储，避免无业务配置时写不进 LoginConfig、或异步加载覆盖开关。
+  static const intranetJenkinsModeKey = 'is_intranet_jenkins_mode';
+
+  /// 读取内网模式：优先独立 key，其次环境 LoginConfig，默认 true。
+  static Future<bool> loadIntranetJenkinsMode([SharedPreferences? prefs]) async {
+    final sp = prefs ?? await SharedPreferences.getInstance();
+    if (sp.containsKey(intranetJenkinsModeKey)) {
+      return sp.getBool(intranetJenkinsModeKey) ?? true;
+    }
+    final env = await _resolveEnvironment(sp);
+    final loginConfig = await _loadLoginConfig(sp, env);
+    return loginConfig?.isIntranetJenkinsMode ?? true;
+  }
+
+  /// 写入内网模式（独立 key + 同步当前环境 LoginConfig）。
+  static Future<void> saveIntranetJenkinsMode(bool enabled) async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(intranetJenkinsModeKey, enabled);
+    global.isIntranetJenkinsMode = enabled;
+
+    final env = global.currentEnvironment ?? await _resolveEnvironment(sp);
+    final existing = await _loadLoginConfig(sp, env);
+    if (existing == null) {
+      // ignore: avoid_print
+      print(
+        '[JenkinsRoute] 已保存模式='
+        '${enabled ? "内网直连" : "ntfy消息"} (仅独立key)',
+      );
+      return;
+    }
+    final updated = LoginConfig(
+      environmentConfig: existing.environmentConfig,
+      gmallUsername: existing.gmallUsername,
+      gmallPassword: existing.gmallPassword,
+      jenkinsUsername: existing.jenkinsUsername,
+      jenkinsPassword: existing.jenkinsPassword,
+      jenkinsServers: existing.jenkinsServers,
+      selectedJenkinsServerId: existing.selectedJenkinsServerId,
+      isIntranetJenkinsMode: enabled,
+    );
+    await sp.setString(env.toString(), jsonEncode(updated.toJson()));
+    // ignore: avoid_print
+    print(
+      '[JenkinsRoute] 已保存模式='
+      '${enabled ? "内网直连" : "ntfy消息"}',
+    );
+  }
+
   /// 尝试用本地保存的业务配置恢复 Gmall token 与 Jenkins API。
   /// 返回 true 表示至少 Jenkins 或 Gmall 之一恢复成功。
   static Future<bool> restore() async {
@@ -188,7 +236,7 @@ $key
           selected?.jenkinsPassword ?? existing?.jenkinsPassword ?? '',
       jenkinsServers: servers,
       selectedJenkinsServerId: selectedId,
-      isIntranetJenkinsMode: existing?.isIntranetJenkinsMode ?? true,
+      isIntranetJenkinsMode: await loadIntranetJenkinsMode(sp),
     );
 
     await sp.setString(env.toString(), jsonEncode(loginConfig.toJson()));
@@ -240,8 +288,12 @@ $key
       );
       restored = true;
     }
-    global.isIntranetJenkinsMode =
-        loginConfig?.isIntranetJenkinsMode ?? true;
+    global.isIntranetJenkinsMode = await loadIntranetJenkinsMode(sp);
+    // ignore: avoid_print
+    print(
+      '[JenkinsRoute] 当前模式='
+      '${global.isIntranetJenkinsMode ? "内网直连" : "ntfy消息"}',
+    );
 
     // 切换环境前清空旧 Gmall 会话，避免串用
     global.gmallUrl = null;
