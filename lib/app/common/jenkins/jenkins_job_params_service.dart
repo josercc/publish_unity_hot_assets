@@ -211,7 +211,7 @@ class JenkinsJobParamsService {
       headers: headers,
       required: false,
     );
-    return _runGetChoicesScript(
+    final evaluated = await _runGetChoicesScript(
       topic: topic,
       serverUrl: server.url,
       jenkinsBase: jenkinsBase,
@@ -221,6 +221,7 @@ class JenkinsJobParamsService {
       paramName: paramName,
       referencedValues: referencedValues,
     );
+    return evaluated.choices;
   }
 
   Future<List<JenkinsJobParameter>> _resolveActiveChoices({
@@ -250,12 +251,16 @@ class JenkinsJobParamsService {
       }
 
       final refs = <String, String>{};
+      // 把当前已解析参数一并传入，Reactive 脚本才能读到 PLATFORM。
+      for (final e in values.entries) {
+        refs[e.key] = e.value;
+      }
       for (final ref in param.referencedParameters) {
-        refs[ref] = values[ref] ?? '';
+        refs.putIfAbsent(ref, () => values[ref] ?? '');
       }
 
       try {
-        final choices = await _runGetChoicesScript(
+        final evaluated = await _runGetChoicesScript(
           topic: topic,
           serverUrl: serverUrl,
           jenkinsBase: jenkinsBase,
@@ -265,13 +270,20 @@ class JenkinsJobParamsService {
           paramName: param.name,
           referencedValues: refs,
         );
+        final choices = evaluated.choices;
+        final refsFromJob = evaluated.referencedParameters;
         // ignore: avoid_print
         print(
           '[JobParams] ActiveChoices ${param.name} '
-          'choices=${choices.length} refs=$refs',
+          'choices=${choices.length} refs=$refs '
+          'jobRefs=$refsFromJob',
         );
+        final mergedRefs = refsFromJob.isNotEmpty
+            ? refsFromJob
+            : param.referencedParameters;
         final updated = param.copyWith(
           choices: choices.isNotEmpty ? choices : param.choices,
+          referencedParameters: mergedRefs,
         );
         result.add(updated);
         if (choices.isNotEmpty) {
@@ -290,7 +302,8 @@ class JenkinsJobParamsService {
   }
 
   /// 通过 Jenkins `/scriptText` 执行 Groovy，调用 Active Choices 的 getChoices()。
-  Future<List<String>> _runGetChoicesScript({
+  Future<({List<String> choices, List<String> referencedParameters})>
+      _runGetChoicesScript({
     required String topic,
     required String serverUrl,
     required String jenkinsBase,
@@ -359,7 +372,7 @@ class JenkinsJobParamsService {
         if (retry.ok &&
             retry.statusCode != null &&
             retry.statusCode! < 400) {
-          return _parseScriptChoices(retry.body);
+          return _parseScriptChoicesResult(retry.body);
         }
       }
     }
@@ -371,7 +384,7 @@ class JenkinsJobParamsService {
       );
     }
 
-    return _parseScriptChoices(res.body);
+    return _parseScriptChoicesResult(res.body);
   }
 
   String _buildGetChoicesGroovy({
@@ -392,31 +405,44 @@ def refs = $refsLit as Map
 
 def job = Jenkins.instance.getItemByFullName(jobName)
 if (job == null) {
-  println '[]'
+  println JsonOutput.toJson([choices: [], referencedParameters: []])
   return
 }
 def prop = job.getProperty(ParametersDefinitionProperty)
 if (prop == null) {
-  println '[]'
+  println JsonOutput.toJson([choices: [], referencedParameters: []])
   return
 }
 def defn = prop.getParameterDefinition(paramName)
 if (defn == null) {
-  println '[]'
+  println JsonOutput.toJson([choices: [], referencedParameters: []])
   return
 }
 
+def referenced = []
+try {
+  def rawRefs = defn.referencedParameters
+  if (rawRefs instanceof Collection) {
+    rawRefs.each { if (it) referenced << it.toString().trim() }
+  } else if (rawRefs != null) {
+    rawRefs.toString().split(',').each { part ->
+      def t = part?.toString()?.trim()
+      if (t) referenced << t
+    }
+  }
+} catch (Throwable ignored) {}
+
 def result
 try {
-  if (defn.metaClass.respondsTo(defn, 'getChoices', Map)) {
+  // 优先带参数 Map 调用，确保 Reactive 脚本能读到 PLATFORM 等引用值。
+  // 不用 respondsTo：部分 Groovy/插件组合会误判 overload，落到无参 getChoices()。
+  try {
     result = defn.getChoices(refs ?: [:])
-  } else if (defn.metaClass.respondsTo(defn, 'getChoices')) {
+  } catch (MissingMethodException ignored) {
     result = defn.getChoices()
-  } else {
-    result = []
   }
 } catch (Throwable t) {
-  println JsonOutput.toJson([error: t.toString()])
+  println JsonOutput.toJson([error: t.toString(), referencedParameters: referenced])
   return
 }
 
@@ -436,7 +462,7 @@ if (result instanceof Map) {
 } else if (result != null) {
   list << result.toString()
 }
-println JsonOutput.toJson(list)
+println JsonOutput.toJson([choices: list, referencedParameters: referenced])
 ''';
   }
 
@@ -552,6 +578,56 @@ println JsonOutput.toJson(list)
     }
     if (pairs.isEmpty) return null;
     return pairs.join('; ');
+  }
+
+  ({List<String> choices, List<String> referencedParameters})
+      _parseScriptChoicesResult(dynamic body) {
+    dynamic decoded = body;
+    if (body is String) {
+      final text = body.trim();
+      if (text.isEmpty) {
+        return (choices: const <String>[], referencedParameters: const <String>[]);
+      }
+      try {
+        decoded = jsonDecode(text);
+      } catch (_) {
+        return (
+          choices: _parseScriptChoices(text),
+          referencedParameters: const <String>[],
+        );
+      }
+    }
+
+    if (decoded is Map) {
+      if (decoded.containsKey('error')) {
+        throw StateError('Groovy getChoices 错误: ${decoded['error']}');
+      }
+      final refs = <String>[];
+      final rawRefs = decoded['referencedParameters'];
+      if (rawRefs is List) {
+        for (final e in rawRefs) {
+          final t = e.toString().trim();
+          if (t.isNotEmpty) refs.add(t);
+        }
+      } else if (rawRefs is String && rawRefs.trim().isNotEmpty) {
+        for (final part in rawRefs.split(',')) {
+          final t = part.trim();
+          if (t.isNotEmpty) refs.add(t);
+        }
+      }
+      final rawChoices = decoded.containsKey('choices')
+          ? decoded['choices']
+          : decoded;
+      return (
+        choices: _parseScriptChoices(rawChoices),
+        referencedParameters: refs,
+      );
+    }
+
+    return (
+      choices: _parseScriptChoices(decoded),
+      referencedParameters: const <String>[],
+    );
   }
 
   List<String> _parseScriptChoices(dynamic body) {

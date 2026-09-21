@@ -270,22 +270,29 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
     if (server == null) return;
 
     final dependents = jobParams
-        .where(
-          (p) =>
-              p.isActiveChoices &&
-              p.referencedParameters.contains(changedParam),
-        )
+        .where((p) => _isDependentActiveChoice(p, changedParam))
         .toList();
     if (dependents.isEmpty) return;
+
+    // ignore: avoid_print
+    print(
+      '[JobParams] refresh dependents of $changedParam → '
+      '${dependents.map((p) => p.name).join(',')}',
+    );
 
     final seq = ++_refreshSeq;
     for (final param in dependents) {
       refreshingParamNames.add(param.name);
       refreshingParamNames.refresh();
       try {
+        // 传当前表单全部值，避免 Jenkins API 未回传 referencedParameters 时
+        // Groovy 脚本拿不到 PLATFORM 等联动字段。
         final refs = <String, String>{};
+        for (final e in jobParamValues.entries) {
+          refs[e.key] = '${e.value ?? ''}';
+        }
         for (final ref in param.referencedParameters) {
-          refs[ref] = '${jobParamValues[ref] ?? ''}';
+          refs.putIfAbsent(ref, () => '${jobParamValues[ref] ?? ''}');
         }
         final choices = await _paramsService.evaluateActiveChoiceChoices(
           jobName: jenkinsJobName,
@@ -297,7 +304,7 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
 
         final index = jobParams.indexWhere((p) => p.name == param.name);
         if (index < 0) continue;
-        jobParams[index] = param.copyWith(choices: choices);
+        jobParams[index] = jobParams[index].copyWith(choices: choices);
         jobParams.refresh();
 
         final current = '${jobParamValues[param.name] ?? ''}';
@@ -312,6 +319,13 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
           final filter = _choiceFilterControllers[param.name];
           filter?.clear();
           await _refreshDependentActiveChoices(changedParam: param.name);
+        } else {
+          // 选项集已变但当前值仍合法：清筛选，避免仍显示旧平台过滤结果。
+          _choiceFilterControllers[param.name]?.clear();
+          final display = _choiceDisplayControllers[param.name];
+          if (display != null && display.text != current) {
+            display.text = current;
+          }
         }
       } catch (e) {
         // ignore: avoid_print
@@ -321,6 +335,23 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
         refreshingParamNames.refresh();
       }
     }
+  }
+
+  /// Reactive 参数是否应随 [changedParam] 重算选项。
+  bool _isDependentActiveChoice(
+    JenkinsJobParameter param,
+    String changedParam,
+  ) {
+    if (!param.isActiveChoices) return false;
+    if (param.referencesParam(changedParam)) return true;
+
+    // Jenkins tree 有时拿不到 referencedParameters：Cascade 仍按参数顺序联动。
+    if (!param.isReactiveActiveChoices) return false;
+    if (param.referencedParameters.isNotEmpty) return false;
+
+    final changedIdx = jobParams.indexWhere((p) => p.name == changedParam);
+    final selfIdx = jobParams.indexWhere((p) => p.name == param.name);
+    return changedIdx >= 0 && selfIdx > changedIdx;
   }
 
   /// 提交构建时使用的参数 Map（字符串化）。

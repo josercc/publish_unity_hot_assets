@@ -39,6 +39,20 @@ class JenkinsJobParameter {
             !lower.contains('choiceparameterdefinition'));
   }
 
+  /// Active Choices Reactive（会随 Referenced parameters 刷新）。
+  bool get isReactiveActiveChoices {
+    final lower = typeClass.toLowerCase();
+    return lower.contains('cascadechoice') ||
+        referencedParameters.isNotEmpty;
+  }
+
+  /// [name] 是否在 Referenced parameters 中（忽略大小写与首尾空白）。
+  bool referencesParam(String name) {
+    final needle = name.trim().toLowerCase();
+    if (needle.isEmpty) return false;
+    return referencedParameters.any((r) => r.trim().toLowerCase() == needle);
+  }
+
   factory JenkinsJobParameter.fromJson(Map<String, dynamic> json) {
     final typeClass = (json['_class'] ?? '').toString();
     final name = (json['name'] ?? '').toString();
@@ -63,6 +77,7 @@ class JenkinsJobParameter {
   JenkinsJobParameter copyWith({
     List<String>? choices,
     dynamic defaultValue,
+    List<String>? referencedParameters,
   }) {
     return JenkinsJobParameter(
       name: name,
@@ -71,7 +86,8 @@ class JenkinsJobParameter {
       widgetType: widgetType,
       choices: choices ?? this.choices,
       defaultValue: defaultValue ?? this.defaultValue,
-      referencedParameters: referencedParameters,
+      referencedParameters:
+          referencedParameters ?? this.referencedParameters,
     );
   }
 
