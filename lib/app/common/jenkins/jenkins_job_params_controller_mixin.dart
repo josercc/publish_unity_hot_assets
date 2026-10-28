@@ -9,7 +9,9 @@ import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_historical_t
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_parameter.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_service.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_prod_release_confirm.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_task_history_store.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/release_choice_tag.dart';
 import 'package:publish_unity_hot_assets/app/modules/jenkins_workspace/jenkins_workspace_args.dart';
 import 'package:publish_unity_hot_assets/app/modules/log_viewer/log_viewer_args.dart';
 import 'package:publish_unity_hot_assets/app/modules/task_history/jenkins_task_history_args.dart';
@@ -46,6 +48,25 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
 
   /// 当前选中的打包机（加载参数 / 选机后可用）。
   PackagingServer? get selectedPackagingServer => _selectedServer;
+
+  /// 当前表单是否选中了带【生产】标记的热更版本。
+  bool get hasProdReleaseSelection {
+    for (final raw in jobParamValues.values) {
+      if (ReleaseChoiceTag.isProd('$raw')) return true;
+    }
+    return false;
+  }
+
+  /// 生产版本相关的参数摘要（用于横幅文案）。
+  List<String> get prodReleaseSelectionLines {
+    final lines = <String>[];
+    for (final entry in jobParamValues.entries) {
+      final raw = '${entry.value ?? ''}';
+      if (!ReleaseChoiceTag.isProd(raw)) continue;
+      lines.add('${entry.key}: ${ReleaseChoiceTag.strip(raw)}');
+    }
+    return lines;
+  }
 
   TextEditingController textControllerFor(String name, String initial) {
     return _textControllers.putIfAbsent(
@@ -355,7 +376,29 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
   }
 
   /// 提交构建时使用的参数 Map（字符串化）。
+  ///
+  /// 会剥离 Active Choices 上的【生产】/【测试】展示前缀，避免写入 Jenkins 真实 version。
   Map<String, String> collectJobParamQuery() {
+    final result = <String, String>{};
+    for (final p in jobParams) {
+      final raw = jobParamValues[p.name];
+      late final String value;
+      if (p.widgetType == JenkinsParamWidgetType.text ||
+          p.widgetType == JenkinsParamWidgetType.password ||
+          p.widgetType == JenkinsParamWidgetType.multiLine) {
+        value = _textControllers[p.name]?.text ?? '${raw ?? ''}';
+      } else if (p.widgetType == JenkinsParamWidgetType.boolean) {
+        value = (raw == true).toString();
+      } else {
+        value = '${raw ?? ''}';
+      }
+      result[p.name] = ReleaseChoiceTag.strip(value);
+    }
+    return result;
+  }
+
+  /// 提交前检查用的参数（保留【生产】前缀，便于识别正式包）。
+  Map<String, String> collectJobParamQueryForConfirm() {
     final result = <String, String>{};
     for (final p in jobParams) {
       final raw = jobParamValues[p.name];
@@ -403,6 +446,7 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
         return;
       }
 
+      final confirmParams = collectJobParamQueryForConfirm();
       final params = collectJobParamQuery();
       if (params.isEmpty && jobParams.isNotEmpty) {
         throw StateError('打包参数为空，请刷新参数后重试');
@@ -428,6 +472,19 @@ mixin JenkinsJobParamsControllerMixin on GetxController {
         jobParamValues[uidKey] = params[uidKey];
         final uidCtrl = _textControllers[uidKey];
         if (uidCtrl != null) uidCtrl.text = params[uidKey]!;
+      }
+
+      final prodLines = collectProdReleaseParamLines(confirmParams);
+      if (prodLines.isNotEmpty) {
+        jobRunMessage.value = '检测到生产版本，等待确认...';
+        final continueProd = await confirmProdReleaseBeforeSubmit(
+          prodParamLines: prodLines,
+        );
+        if (!continueProd) {
+          jobRunStatus.value = JenkinsJobRunStatus.idle;
+          jobRunMessage.value = '已取消提交（生产版本未确认）';
+          return;
+        }
       }
 
       jobRunMessage.value = '正在检查各打包机是否有相同任务...';

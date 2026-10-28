@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_parameter.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_params_controller_mixin.dart';
 import 'package:publish_unity_hot_assets/app/common/jenkins/jenkins_job_run_status.dart';
+import 'package:publish_unity_hot_assets/app/common/jenkins/release_choice_tag.dart';
 
 /// 展示 Jenkins Job 参数：选项(可筛选) / 开关 / 输入框。
 class JenkinsJobParamsForm extends StatelessWidget {
@@ -111,6 +112,9 @@ class JenkinsJobParamsForm extends StatelessWidget {
           runStatus == JenkinsJobRunStatus.building ||
           runStatus == JenkinsJobRunStatus.submitting;
 
+      final isProdRelease = controller.hasProdReleaseSelection;
+      final prodLines = controller.prodReleaseSelectionLines;
+
       final header = Padding(
         padding: const EdgeInsets.fromLTRB(0, 4, 0, 8),
         child: Column(
@@ -122,6 +126,10 @@ class JenkinsJobParamsForm extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
+            if (isProdRelease) ...[
+              const SizedBox(height: 8),
+              _ProdReleaseBanner(lines: prodLines),
+            ],
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -143,14 +151,27 @@ class JenkinsJobParamsForm extends StatelessWidget {
                           // ignore: discarded_futures
                           controller.executeJenkinsJob();
                         },
+                  style: isProdRelease
+                      ? FilledButton.styleFrom(
+                          backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                        )
+                      : null,
                   icon: runBusy
                       ? const SizedBox(
                           width: 14,
                           height: 14,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.play_arrow, size: 18),
-                  label: Text(runBusy ? '执行中' : '执行任务'),
+                      : Icon(
+                          isProdRelease ? Icons.warning_amber : Icons.play_arrow,
+                          size: 18,
+                        ),
+                  label: Text(
+                    runBusy
+                        ? '执行中'
+                        : (isProdRelease ? '执行生产打包' : '执行任务'),
+                  ),
                 ),
                 if (canCancel)
                   OutlinedButton.icon(
@@ -279,6 +300,47 @@ class JenkinsJobParamsForm extends StatelessWidget {
       case JenkinsJobRunStatus.idle:
         return theme.hintColor;
     }
+  }
+}
+
+class _ProdReleaseBanner extends StatelessWidget {
+  const _ProdReleaseBanner({required this.lines});
+
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final detail = lines.isEmpty ? '' : '\n${lines.join('\n')}';
+    return Material(
+      color: Colors.red.shade50,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.red.shade300, width: 1.5),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red.shade700),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '当前选中的是生产（prod）热更版本，请确认后再打包。$detail',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.red.shade800,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -429,6 +491,8 @@ class _ParamTile extends StatelessWidget {
             current,
           );
           final filter = controller.choiceFilterControllerFor(live.name);
+          final currentIsProd = ReleaseChoiceTag.isProd(current);
+          final envLabel = ReleaseChoiceTag.envLabel(current);
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -436,23 +500,92 @@ class _ParamTile extends StatelessWidget {
               TextField(
                 controller: display,
                 readOnly: true,
+                style: currentIsProd
+                    ? TextStyle(
+                        color: Colors.red.shade800,
+                        fontWeight: FontWeight.w700,
+                      )
+                    : null,
                 decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
+                  border: OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: currentIsProd
+                          ? Colors.red.shade400
+                          : Theme.of(context).colorScheme.outline,
+                      width: currentIsProd ? 1.8 : 1,
+                    ),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: currentIsProd
+                          ? Colors.red.shade400
+                          : Theme.of(context).colorScheme.outline,
+                      width: currentIsProd ? 1.8 : 1,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(
+                      color: currentIsProd
+                          ? Colors.red.shade700
+                          : Theme.of(context).colorScheme.primary,
+                      width: 2,
+                    ),
+                  ),
+                  filled: currentIsProd,
+                  fillColor: currentIsProd ? Colors.red.shade50 : null,
                   isDense: true,
                   hintText: '当前选项',
+                  prefixIcon: envLabel == null
+                      ? null
+                      : Padding(
+                          padding: const EdgeInsets.only(left: 8),
+                          child: Chip(
+                            label: Text(envLabel),
+                            labelStyle: TextStyle(
+                              color: currentIsProd
+                                  ? Colors.red.shade50
+                                  : Colors.green.shade50,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                            ),
+                            backgroundColor: currentIsProd
+                                ? Colors.red.shade700
+                                : Colors.green.shade700,
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                  prefixIconConstraints: envLabel == null
+                      ? null
+                      : const BoxConstraints(minWidth: 64, minHeight: 32),
                   suffixIcon: PopupMenuButton<String>(
                     tooltip: '选择选项',
-                    icon: const Icon(Icons.arrow_drop_down),
+                    icon: Icon(
+                      Icons.arrow_drop_down,
+                      color: currentIsProd ? Colors.red.shade700 : null,
+                    ),
                     onSelected: (v) {
                       filter.clear();
                       controller.setJobParamValue(live.name, v);
                     },
                     itemBuilder: (context) => choices
                         .map(
-                          (c) => PopupMenuItem<String>(
-                            value: c,
-                            child: Text(c),
-                          ),
+                          (c) {
+                            final prod = ReleaseChoiceTag.isProd(c);
+                            return PopupMenuItem<String>(
+                              value: c,
+                              child: Text(
+                                c,
+                                style: TextStyle(
+                                  color: prod ? Colors.red.shade800 : null,
+                                  fontWeight:
+                                      prod ? FontWeight.w700 : FontWeight.w400,
+                                ),
+                              ),
+                            );
+                          },
                         )
                         .toList(),
                   ),
